@@ -4,8 +4,7 @@ from django.db import models
 class Profile(models.Model):
     ROLE_CHOICES = [
         ('student', 'Student'),
-        ('professor', 'Professor'),
-        ('admin', 'Admin')
+        ('professor', 'Professor')
     ]
     id = models.AutoField(primary_key=True)
     user = models.OneToOneField(User, on_delete=models.CASCADE)
