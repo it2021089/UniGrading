@@ -1,3 +1,10 @@
 from django.db import models
+from users.models import Profile
 
-# Create your models here.
+class Subject(models.Model):
+    name = models.CharField(max_length=100)
+    professor = models.ForeignKey(Profile, limit_choices_to={'role': 'professor'}, on_delete=models.CASCADE)
+    description = models.TextField(blank=True)
+
+    def __str__(self):
+        return self.name

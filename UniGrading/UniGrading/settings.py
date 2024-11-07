@@ -31,12 +31,22 @@ ALLOWED_HOSTS = []
 # Application definition
 
 INSTALLED_APPS = [
+    'jazzmin',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'users',
+    'subjects',
+    'assignments',
+    'grades'
+]
+
+AUTHENTICATION_BACKENDS = [
+    'users.auth_backend.UsernameOrEmailBackend',
+    'django.contrib.auth.backends.ModelBackend',  
 ]
 
 MIDDLEWARE = [
@@ -80,6 +90,7 @@ DATABASES = {
     }
 }
 
+LOGIN_URL = '/login/'
 
 # Password validation
 # https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
