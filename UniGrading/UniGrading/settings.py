@@ -45,7 +45,6 @@ INSTALLED_APPS = [
 ]
 
 AUTHENTICATION_BACKENDS = [
-    'users.auth_backend.UsernameOrEmailBackend',
     'django.contrib.auth.backends.ModelBackend',  
 ]
 
@@ -76,7 +75,7 @@ TEMPLATES = [
         },
     },
 ]
-
+AUTH_USER_MODEL = 'users.CustomUser'
 WSGI_APPLICATION = 'UniGrading.wsgi.application'
 
 
@@ -121,7 +120,6 @@ TIME_ZONE = 'UTC'
 USE_I18N = True
 
 USE_TZ = True
-
 
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/

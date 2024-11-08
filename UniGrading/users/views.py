@@ -2,8 +2,8 @@ from django.shortcuts import render, redirect
 from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.forms import AuthenticationForm
-from .forms import UserRegistrationForm, CustomAuthenticationForm
-from .models import Profile, Institution
+from .forms import UserRegistrationForm
+from .models import CustomUser, Institution
 
 # Registration view
 def register(request):
@@ -16,7 +16,9 @@ def register(request):
             
             role = form.cleaned_data['role']
             institution = form.cleaned_data['institution']
-            Profile.objects.create(user=user, role=role, institution=institution)
+            user.role = role
+            user.institution = institution
+            user.save()
             
             login(request, user)  # Log the user in automatically after registration
             return redirect('dashboard')  # Redirect to dashboard after registration
@@ -28,13 +30,13 @@ def register(request):
 # Login view
 def user_login(request):
     if request.method == 'POST':
-        form = CustomAuthenticationForm(data=request.POST)
+        form = AuthenticationForm(data=request.POST)
         if form.is_valid():
             user = form.get_user()
             login(request, user)
             return redirect('dashboard')
     else:
-        form = CustomAuthenticationForm()
+        form = AuthenticationForm()
     return render(request, 'login.html', {'form': form})
 
 # Logout view
@@ -45,7 +47,7 @@ def user_logout(request):
 # Dashboard view
 @login_required
 def dashboard(request):
-    role = request.user.profile.role
+    role = request.user.role
     if role == 'professor':
         return redirect('professor_dashboard')
     elif role == 'student':
@@ -55,13 +57,12 @@ def dashboard(request):
 
 # Professor dashboard view
 @login_required
-@user_passes_test(lambda u: u.profile.role == 'professor')
+@user_passes_test(lambda u: u.role == 'professor')
 def professor_dashboard(request):
     return render(request, 'professor_dashboard.html')
 
 # Student dashboard view
 @login_required
-@user_passes_test(lambda u: u.profile.role == 'student')
+@user_passes_test(lambda u: u.role == 'student')
 def student_dashboard(request):
     return render(request, 'student_dashboard.html')
-

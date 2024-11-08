@@ -1,6 +1,11 @@
 from django.contrib import admin
-from .models import Institution, Profile
+from django.contrib.auth.admin import UserAdmin
+from .models import CustomUser, Institution
 
-# Register your models here.
+class CustomUserAdmin(UserAdmin):
+    fieldsets = UserAdmin.fieldsets + (
+        (None, {'fields': ('role', 'institution')}),
+    )
+
+admin.site.register(CustomUser, CustomUserAdmin)
 admin.site.register(Institution)
-admin.site.register(Profile)

@@ -1,9 +1,9 @@
 from django.db import models
 from assignments.models import Assignment
-from users.models import Profile
+from users.models import CustomUser
 
 class Submission(models.Model):
-    student = models.ForeignKey(Profile, limit_choices_to={'role': 'student'}, on_delete=models.CASCADE)
+    student = models.ForeignKey(CustomUser, limit_choices_to={'role': 'student'}, on_delete=models.CASCADE)
     assignment = models.ForeignKey(Assignment, on_delete=models.CASCADE)
     submitted_file = models.FileField(upload_to='submissions/', blank=True, null=True)
     submitted_text = models.TextField(blank=True, null=True)
