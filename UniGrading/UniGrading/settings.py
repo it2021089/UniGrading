@@ -43,11 +43,41 @@ INSTALLED_APPS = [
     'assignments',
     'grades'
 ]
-
+JAZZMIN_SETTINGS = {
+    "site_title": "UniGrading Admin",
+    "site_header": "UniGrading",
+    "site_brand": "UniGrading",
+    "welcome_sign": "Welcome to the UniGrading Admin Panel",
+    "show_sidebar": True,
+    "navigation_expanded": True,
+    "hide_apps": [],
+    "hide_models": [],
+    "order_with_respect_to": ["auth", "users", "subjects", "assignments", "grades"],
+    "icons": {
+        "auth": "fas fa-users-cog",
+        "auth.user": "fas fa-user",
+        "auth.Group": "fas fa-users",
+        "users.CustomUser": "fas fa-user",
+        "users.Institution": "fas fa-university",
+        "subjects.Subject": "fas fa-book",
+        "assignments.Assignment": "fas fa-tasks",
+        "grades.Grade": "fas fa-graduation-cap",
+    },
+    "default_icon_parents": "fas fa-chevron-circle-right",
+    "default_icon_children": "fas fa-circle",
+    "related_modal_active": True,
+    "custom_css": None,
+    "custom_js": None,
+    "show_ui_builder": False,
+}
 AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',  
 ]
+STATIC_URL = 'static/'
 
+STATICFILES_DIRS = [
+    BASE_DIR / "static",
+]
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',

@@ -10,7 +10,7 @@ class CustomUser(AbstractUser):
     institution = models.ForeignKey('Institution', on_delete=models.SET_NULL, null=True, blank=True)
 
     def __str__(self):
-        return f"{self.username} ({self.role})"
+        return f"{self.first_name} {self.last_name} ({self.role})"
 
 class Institution(models.Model):
     institution_id = models.AutoField(primary_key=True)

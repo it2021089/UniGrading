@@ -4,21 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Login</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
 </head>
 <body>
-    <h2>Login</h2>
-    <form method="post">
-        {% csrf_token %}
-        <div>
-            <label for="id_username">Username or Email:</label>
-            {{ form.username }}
-        </div>
-        <div>
-            <label for="id_password">Password:</label>
-            {{ form.password }}
-        </div>
-        <button type="submit">Login</button>
-    </form>
-    <p>Don't have an account? <a href="{% url 'register' %}">Click here to register</a>.</p>
+    <div class="container">
+        <h2>Login</h2>
+        <form method="post">
+            {% csrf_token %}
+            {% load custom_filters %}
+            <div class="form-group">
+                <label for="id_username">Username or Email:</label>
+                {{ form.username|add_class:"form-control" }}
+            </div>
+            <div class="form-group">
+                <label for="id_password">Password:</label>
+                {{ form.password|add_class:"form-control" }}
+            </div>
+            <button type="submit">Login</button>
+        </form>
+        <p>Don't have an account? <a href="{% url 'register' %}">Click here to register</a>.</p>
+    </div>
 </body>
 </html>

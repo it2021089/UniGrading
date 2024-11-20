@@ -1,14 +1,53 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Register</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
 </head>
 <body>
-    <h2>Register</h2>
-    <form method="post">
-        {% csrf_token %}
-        {{ form.as_p }}
-        <button type="submit">Register</button>
-    </form>
+    <div class="container">
+        <h2>Register</h2>
+        <form method="post">
+            {% csrf_token %}
+            {% load custom_filters %}
+            <div class="form-group">
+                <label for="id_username">Username:</label>
+                {{ form.username|add_class:"form-control" }}
+            </div>
+            <div class="form-group">
+                <label for="id_first_name">First Name:</label>
+                {{ form.first_name|add_class:"form-control" }}
+            </div>
+            <div class="form-group">
+                <label for="id_last_name">Last Name:</label>
+                {{ form.last_name|add_class:"form-control" }}
+            </div>
+            <div class="form-group">
+                <label for="id_email">Email:</label>
+                {{ form.email|add_class:"form-control" }}
+            </div>
+            <div class="form-group">
+                <label for="id_password">Password:</label>
+                {{ form.password|add_class:"form-control" }}
+            </div>
+            <div class="form-group">
+                <label for="id_confirm_password">Confirm Password:</label>
+                {{ form.confirm_password|add_class:"form-control" }}
+            </div>
+            <div class="form-group">
+                <label for="id_role">Role:</label>
+                {{ form.role|add_class:"form-control" }}
+            </div>
+            <div class="form-group">
+                <label for="id_institution">Institution:</label>
+                {{ form.institution|add_class:"form-control" }}
+            </div>
+            <button type="submit">Register</button>
+        </form>
+        <p>Already have an account? <a href="{% url 'login' %}">Click here to login</a>.</p>
+    </div>
 </body>
 </html>
