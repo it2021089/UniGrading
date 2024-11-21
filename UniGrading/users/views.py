@@ -3,6 +3,7 @@ from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.forms import AuthenticationForm
 from .forms import UserRegistrationForm
+from django.contrib.auth import get_backends
 from .models import CustomUser, Institution
 
 # Registration view
@@ -19,6 +20,10 @@ def register(request):
             user.role = role
             user.institution = institution
             user.save()
+            
+            # Set the backend attribute on the user object
+            backend = get_backends()[0]
+            user.backend = f"{backend.__module__}.{backend.__class__.__name__}"
             
             login(request, user)  # Log the user in automatically after registration
             return redirect('dashboard')  # Redirect to dashboard after registration

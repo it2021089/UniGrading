@@ -71,6 +71,7 @@ JAZZMIN_SETTINGS = {
     "show_ui_builder": False,
 }
 AUTHENTICATION_BACKENDS = [
+    'users.backends.CustomAuthentication',
     'django.contrib.auth.backends.ModelBackend',  
 ]
 STATIC_URL = 'static/'

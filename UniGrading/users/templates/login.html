@@ -13,13 +13,33 @@
         <form method="post">
             {% csrf_token %}
             {% load custom_filters %}
+            {% if form.errors %}
+                <div class="alert alert-danger">
+                    <ul>
+                        {% for field in form %}
+                            {% for error in field.errors %}
+                                <li>{{ error }}</li>
+                            {% endfor %}
+                        {% endfor %}
+                        {% for error in form.non_field_errors %}
+                            <li>{{ error }}</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            {% endif %}
             <div class="form-group">
                 <label for="id_username">Username or Email:</label>
                 {{ form.username|add_class:"form-control" }}
+                {% for error in form.username.errors %}
+                    <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
+                {% endfor %}
             </div>
             <div class="form-group">
                 <label for="id_password">Password:</label>
                 {{ form.password|add_class:"form-control" }}
+                {% for error in form.password.errors %}
+                    <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
+                {% endfor %}
             </div>
             <button type="submit">Login</button>
         </form>
