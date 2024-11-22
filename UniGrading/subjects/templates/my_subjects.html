@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Subjects</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
+</head>
+<body>
+    <div class="container">
+        <h2>My Subjects</h2>
+        {% if user.role == 'professor' %}
+            <button onclick="window.location.href='{% url 'create_subject' %}'">Create Subject</button>
+        {% endif %}
+        <ul>
+            {% for subject in subjects %}
+                <li>
+                    <h3><a href="{% url 'subject_detail' subject.pk %}">{{ subject.name }}</a></h3>
+                </li>
+            {% endfor %}
+        </ul>
+    </div>
+</body>
+</html>

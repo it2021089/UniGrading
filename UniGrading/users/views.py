@@ -2,7 +2,7 @@ from django.shortcuts import render, redirect
 from django.contrib.auth import login, logout, authenticate
 from django.contrib.auth.decorators import login_required, user_passes_test
 from django.contrib.auth.forms import AuthenticationForm
-from .forms import UserRegistrationForm
+from .forms import UserRegistrationForm, ProfileForm
 from django.contrib.auth import get_backends
 from .models import CustomUser, Institution
 
@@ -71,3 +71,19 @@ def professor_dashboard(request):
 @user_passes_test(lambda u: u.role == 'student')
 def student_dashboard(request):
     return render(request, 'student_dashboard.html')
+
+#Profile view
+@login_required
+def profile(request):
+    if request.method == 'POST':
+        form = ProfileForm(request.POST, instance=request.user)
+        if form.is_valid():
+            user = form.save(commit=False)
+            password = form.cleaned_data.get('password')
+            if password:
+                user.set_password(password)
+            user.save()
+            return redirect('profile')
+    else:
+        form = ProfileForm(instance=request.user)
+    return render(request, 'profile.html', {'form': form})

@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ subject.name }}</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
+</head>
+<body>
+    <div class="container">
+        <h2>{{ subject.name }}</h2>
+        <p>{{ subject.description }}</p>
+        <p>Professor: 
+            {% if subject.professor.first_name and subject.professor.last_name %}
+                {{ subject.professor.first_name }} {{ subject.professor.last_name }}
+            {% else %}
+                {{ subject.professor.email }}
+            {% endif %}
+        </p>
+        <button onclick="window.location.href='{% url 'my_subjects' %}'">Back to My Subjects</button>
+    </div>
+</body>
+</html>
