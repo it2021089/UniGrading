@@ -1,5 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
+<script>
+    function goBack() {
+        window.history.back();
+    }
+</script>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -18,7 +23,21 @@
                 {{ subject.professor.email }}
             {% endif %}
         </p>
-        <button onclick="window.location.href='{% url 'my_subjects' %}'">Back to My Subjects</button>
+        <h3>Categories</h3>
+        <ul>
+            {% for category in categories %}
+                <li>{{ category.name }}</li>
+            {% endfor %}
+        </ul>
+        {% if user.role == 'professor' %}
+            <h3>Add Category</h3>
+            <form method="post">
+                {% csrf_token %}
+                {{ form.as_p }}
+                <button type="submit">Add Category</button>
+            </form>
+        {% endif %}
+        <button type="button" onclick="goBack()">Back</button>
     </div>
 </body>
 </html>

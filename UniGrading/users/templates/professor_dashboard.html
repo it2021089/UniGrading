@@ -6,15 +6,47 @@
     <title>Professor Dashboard</title>
     {% load static %}
     <link rel="stylesheet" href="{% static 'css/styles.css' %}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
 </head>
 <body>
-    <div class="container">
-        <h2>Professor Dashboard</h2>
-        <ul class="dashboard-menu">
-            <li><a href="{% url 'my_subjects' %}">Subjects</a></li>
-            <li><a href="{% url 'profile' %}">Profile</a></li>
-            <li><a href="{% url 'logout' %}">Log Out</a></li>
-        </ul>
+    <div class="container mt-5">
+        <h2 class="text-center mb-4">Professor Dashboard</h2>
+        <div class="row">
+            <div class="col-md-4">
+                <div class="card shadow-sm mb-4">
+                    <div class="card-body text-center">
+                        <a href="{% url 'my_subjects' %}" class="stretched-link text-decoration-none text-dark">
+                            <i class="fas fa-book fa-3x mb-3 icon-animate"></i>
+                            <h5>Subjects</h5>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card shadow-sm mb-4">
+                    <div class="card-body text-center">
+                        <a href="{% url 'profile' %}" class="stretched-link text-decoration-none text-dark">
+                            <i class="fas fa-user fa-3x mb-3 icon-animate"></i>
+                            <h5>Profile</h5>
+                        </a>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card shadow-sm mb-4">
+                    <div class="card-body text-center">
+                        <a href="{% url 'logout' %}" class="stretched-link text-decoration-none text-dark">
+                            <i class="fas fa-sign-out-alt fa-3x mb-3 icon-animate logout-animate"></i>
+                            <h5>Log Out</h5>
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </body>
 </html>

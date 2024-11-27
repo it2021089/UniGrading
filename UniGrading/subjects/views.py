@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
-from .models import Subject
-from .forms import SubjectForm
+from .models import Subject, Category
+from .forms import SubjectForm, CategoryForm
 
 @login_required
 def my_subjects(request):
@@ -16,6 +16,10 @@ def create_subject(request):
             subject = form.save(commit=False)
             subject.professor = request.user
             subject.save()
+            # Create default categories
+            Category.objects.create(subject=subject, name='Lectures')
+            Category.objects.create(subject=subject, name='Assignments')
+            Category.objects.create(subject=subject, name='Tests')
             return redirect('my_subjects')
     else:
         form = SubjectForm()
@@ -24,4 +28,14 @@ def create_subject(request):
 @login_required
 def subject_detail(request, pk):
     subject = get_object_or_404(Subject, pk=pk)
-    return render(request, 'subject_detail.html', {'subject': subject})
+    categories = subject.categories.all()
+    if request.method == 'POST':
+        form = CategoryForm(request.POST)
+        if form.is_valid():
+            category = form.save(commit=False)
+            category.subject = subject
+            category.save()
+            return redirect('subject_detail', pk=subject.pk)
+    else:
+        form = CategoryForm()
+    return render(request, 'subject_detail.html', {'subject': subject, 'categories': categories, 'form': form})

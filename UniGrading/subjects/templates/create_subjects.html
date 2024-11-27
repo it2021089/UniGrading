@@ -1,5 +1,10 @@
 <!DOCTYPE html>
 <html lang="en">
+    <script>
+        function goBack() {
+            window.history.back();
+        }
+    </script>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -15,7 +20,7 @@
             {{ form.as_p }}
             <button type="submit">Create Subject</button>
         </form>
-        <button onclick="window.location.href='{% url 'my_subjects' %}'">Back to My Subjects</button>
+        <button type="button" onclick="goBack()">Back</button>
     </div>
 </body>
 </html>
