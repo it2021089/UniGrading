@@ -48,55 +48,21 @@ h2 {
     transform: scale(1.2);
 }
 
-.logout-animate:hover {
-    transform: translateY(-5px);
+.logout-card .card-body {
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+}
+
+.logout-card .card-body a {
     color: #dc3545; /* Bootstrap danger color */
 }
 
-/* Form styles */
-form {
-    display: flex;
-    flex-direction: column;
+.logout-card .card-body a:hover {
+    color: #a71d2a; /* Darker shade of Bootstrap danger color */
 }
 
-.form-group {
-    margin-bottom: 15px;
-}
-
-.form-group label {
-    margin-bottom: 5px;
-    color: #555555;
-}
-
-.form-group input,
-.form-group select,
-.form-group textarea {
-    padding: 10px;
-    border: 1px solid #cccccc;
-    border-radius: 4px;
-    transition: border-color 0.3s;
-    width: 100%;
-}
-
-.form-group input:focus,
-.form-group select:focus,
-.form-group textarea:focus {
-    border-color: #66afe9;
-    outline: none;
-}
-
-button {
-    padding: 10px;
-    background-color: #66afe9;
-    color: #ffffff;
-    border: none;
-    border-radius: 4px;
-    cursor: pointer;
-    transition: background-color 0.3s;
-}
-
-button:hover {
-    background-color: #559fd6;
+.logout-animate:hover {
+    transform: translateY(-5px);
 }
 
 /* Error message styles */
