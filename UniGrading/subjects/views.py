@@ -31,3 +31,11 @@ def create_subject(request):
 def subject_detail(request, pk):
     subject = get_object_or_404(Subject, pk=pk)
     return render(request, 'subject_detail.html', {'subject': subject})
+
+@login_required
+def delete_subject(request, pk):
+    subject = get_object_or_404(Subject, pk=pk)
+    if request.method == 'POST':
+        subject.delete()
+        return redirect('my_subjects')
+    return redirect('my_subjects')

@@ -35,6 +35,9 @@
                                 {% endif %}
                             </small></p>
                             <a href="{% url 'subject_detail' subject.pk %}" class="btn btn-outline-primary">View Details</a>
+                            <button type="button" class="btn btn-outline-danger" data-toggle="modal" data-target="#deleteModal" data-subject-id="{{ subject.pk }}" data-subject-name="{{ subject.name }}">
+                                <i class="fas fa-trash-alt"></i>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -81,10 +84,44 @@
             <button class="btn btn-secondary" type="button" onclick="goBack()">Back</button>
         </div>
     </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deleteModalLabel">Confirm Delete</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    Are you sure you want to delete the subject <strong id="subjectName"></strong>?
+                </div>
+                <div class="modal-footer">
+                    <form method="post" action="" id="deleteForm">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-danger">Yes, Delete</button>
+                    </form>
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         function goBack() {
             window.history.back();
         }
+
+        $('#deleteModal').on('show.bs.modal', function (event) {
+            var button = $(event.relatedTarget);
+            var subjectId = button.data('subject-id');
+            var subjectName = button.data('subject-name');
+            var modal = $(this);
+            modal.find('#subjectName').text(subjectName);
+            modal.find('#deleteForm').attr('action', '/subject/' + subjectId + '/delete/');
+        });
     </script>
 </body>
 </html>
