@@ -40,6 +40,15 @@ h2 {
     box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2);
 }
 
+.no-hover-card {
+    transition: none; /* Remove transition effects */
+}
+
+.no-hover-card:hover {
+    transform: none; /* Ensure no transform on hover */
+    box-shadow: none; /* Ensure no box-shadow on hover */
+}
+
 .icon-animate {
     transition: transform 0.3s;
 }
@@ -48,9 +57,21 @@ h2 {
     transform: scale(1.2);
 }
 
+.logout-card .card-body {
+    background-color: #f8d7da;
+    border-color: #f5c6cb;
+}
+
+.logout-card .card-body a {
+    color: #dc3545; /* Bootstrap danger color */
+}
+
+.logout-card .card-body a:hover {
+    color: #a71d2a; /* Darker shade of Bootstrap danger color */
+}
+
 .logout-animate:hover {
     transform: translateY(-5px);
-    color: #dc3545; /* Bootstrap danger color */
 }
 
 /* Form styles */
@@ -74,15 +95,7 @@ form {
     padding: 10px;
     border: 1px solid #cccccc;
     border-radius: 4px;
-    transition: border-color 0.3s;
     width: 100%;
-}
-
-.form-group input:focus,
-.form-group select:focus,
-.form-group textarea:focus {
-    border-color: #66afe9;
-    outline: none;
 }
 
 button {
