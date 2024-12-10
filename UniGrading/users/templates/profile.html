@@ -1,34 +1,23 @@
 <!DOCTYPE html>
-<html lang="el">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Profile</title>
     {% load static %}
+    {% load custom_filters %}
+    {% load breadcrumbs %}
     <link rel="stylesheet" href="{% static 'css/styles.css' %}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
     <script>
         document.addEventListener('DOMContentLoaded', function() {
             const form = document.querySelector('form');
-            const saveButton = document.getElementById('saveButton');
             const originalData = new FormData(form);
             const errorMessage = document.getElementById('error-message');
-
-            form.addEventListener('input', function() {
-                const currentData = new FormData(form);
-                let isChanged = false;
-
-                for (let [key, value] of currentData.entries()) {
-                    if (value !== originalData.get(key)) {
-                        isChanged = true;
-                        break;
-                    }
-                }
-
-                saveButton.disabled = !isChanged;
-                if (isChanged) {
-                    errorMessage.style.display = 'none';
-                }
-            });
 
             form.addEventListener('submit', function(event) {
                 const currentData = new FormData(form);
@@ -47,18 +36,16 @@
                 }
             });
         });
-
-        function goBack() {
-            window.history.back();
-        }
     </script>
 </head>
 <body>
-    <div class="container">
+    <div class="container mt-5">
+        <nav aria-label="breadcrumb">
+            {% breadcrumbs %}
+        </nav>
         <h2>Profile</h2>
         <form method="post">
             {% csrf_token %}
-            {% load custom_filters %}
             <div class="form-group">
                 <label for="id_username">Username:</label>
                 {{ form.username|add_class:"form-control" }}
@@ -89,14 +76,14 @@
             </div>
             <div class="form-group">
                 <label for="id_institution">Institution:</label>
-                {{ form.institution|add_class:"form-control" }}
+                <input type="text" class="form-control" value="{{ form.instance.institution.name }}" readonly>
                 {% for error in form.institution.errors %}
                     <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
                 {% endfor %}
             </div>
             <div class="form-group">
                 <label for="id_role">Role:</label>
-                {{ form.role|add_class:"form-control" }}
+                <input type="text" class="form-control" value="{{ form.instance.get_role_display }}" readonly>
                 {% for error in form.role.errors %}
                     <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
                 {% endfor %}
@@ -115,11 +102,10 @@
                     <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
                 {% endfor %}
             </div>
-            <div id="error-message" class="error-message" style="display: none;">
-                <span class="error-icon">✖</span> No changes to save.
+            <div id="error-message" class="alert alert-danger" style="display: none;">
+                No changes detected. Please make some changes before submitting.
             </div>
-            <button type="submit" id="saveButton" disabled>Save Changes</button>
-            <button type="button" onclick="goBack()">Back</button>
+            <button type="submit" class="btn btn-primary">Save Changes</button>
         </form>
     </div>
 </body>

@@ -1,7 +1,7 @@
 from django.shortcuts import render, redirect, get_object_or_404
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
-from .models import Subject, Category
+from .models import Subject, Category, File
 from .forms import SubjectForm
 
 @login_required
@@ -12,7 +12,7 @@ def my_subjects(request):
     page_number = request.GET.get('page')
     subjects = paginator.get_page(page_number)
 
-    return render(request, 'my_subjects.html', {'subjects': subjects})
+    return render(request, 'my_subjects.html', {'subjects': subjects, 'next': request.GET.get('next', '')})
 
 @login_required
 def create_subject(request):
@@ -25,10 +25,10 @@ def create_subject(request):
             categories = request.POST.getlist('categories')
             for category_name in categories:
                 Category.objects.create(subject=subject, name=category_name)
-            return redirect('my_subjects')
+            return redirect(request.POST.get('next', 'my_subjects'))
     else:
         form = SubjectForm()
-    return render(request, 'create_subjects.html', {'form': form})
+    return render(request, 'create_subjects.html', {'form': form, 'next': request.GET.get('next', '')})
 
 @login_required
 def subject_detail(request, pk):
@@ -48,12 +48,40 @@ def subject_detail(request, pk):
             category_id = request.POST.get('category_id')
             category = get_object_or_404(Category, id=category_id)
             category.delete()
-    return render(request, 'subject_detail.html', {'subject': subject})
+    return render(request, 'subject_detail.html', {'subject': subject, 'next': request.GET.get('next', '')})
 
 @login_required
 def delete_subject(request, pk):
     subject = get_object_or_404(Subject, pk=pk)
     if request.method == 'POST':
         subject.delete()
-        return redirect('my_subjects')
+        return redirect(request.POST.get('next', 'my_subjects'))
     return redirect('my_subjects')
+
+@login_required
+def category_detail(request, pk):
+    category = get_object_or_404(Category, pk=pk)
+    if request.method == 'POST':
+        if 'new_file' in request.POST:
+            file = request.FILES.get('file')
+            if file:
+                File.objects.create(category=category, name=file.name, file=file)
+        elif 'new_subcategory' in request.POST:
+            subcategory_name = request.POST.get('new_subcategory')
+            if subcategory_name:
+                Category.objects.create(subject=category.subject, name=subcategory_name, parent=category)
+    return render(request, 'category_detail.html', {'category': category, 'next': request.GET.get('next', '')})
+
+@login_required
+def delete_file(request, pk):
+    file = get_object_or_404(File, pk=pk)
+    category_pk = file.category.pk
+    file.delete()
+    return redirect('category_detail', pk=category_pk)
+
+@login_required
+def delete_subcategory(request, pk):
+    subcategory = get_object_or_404(Category, pk=pk)
+    parent_category_pk = subcategory.parent.pk if subcategory.parent else subcategory.subject.pk
+    subcategory.delete()  
+    return redirect('category_detail', pk=parent_category_pk)

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Subject Detail</title>
     {% load static %}
+    {% load breadcrumbs %}
     <link rel="stylesheet" href="{% static 'css/styles.css' %}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
@@ -47,13 +48,10 @@
                 {% csrf_token %}
                 <input type="hidden" name="new_category" value="${categoryInput.value}">
                 <input type="hidden" name="add_category" value="true">
+                <input type="hidden" name="next" value="{{ next }}">
             `;
             document.body.appendChild(form);
             form.submit();
-        }
-
-        function goBack() {
-            window.history.back();
         }
 
         function editField(field, saveButton, cancelButton) {
@@ -69,6 +67,7 @@
             form.innerHTML = `
                 {% csrf_token %}
                 <input type="hidden" name="${name}" value="${field.value}">
+                <input type="hidden" name="next" value="{{ next }}">
             `;
             document.body.appendChild(form);
             form.submit();
@@ -84,6 +83,9 @@
 </head>
 <body>
     <div class="container mt-5">
+        <nav aria-label="breadcrumb">
+            {% breadcrumbs %}
+        </nav>
         <div class="row justify-content-center">
             <div class="col-md-8">
                 <div class="card shadow-sm no-hover-card">
@@ -118,10 +120,11 @@
                         <ul class="list-group mb-3" id="category-list">
                             {% for category in subject.categories.all %}
                                 <li class="list-group-item d-flex justify-content-between align-items-center">
-                                    <a href="#" class="text-decoration-none">{{ category.name }}</a>
+                                    <a href="{% url 'category_detail' category.pk %}?next={{ request.path }}" class="text-decoration-none">{{ category.name }}</a>
                                     <form method="post" class="d-inline">
                                         {% csrf_token %}
                                         <input type="hidden" name="category_id" value="{{ category.id }}">
+                                        <input type="hidden" name="next" value="{{ next }}">
                                         <button class="btn btn-outline-danger btn-sm" type="submit" name="remove_category">
                                             <i class="fas fa-trash-alt"></i>
                                         </button>
@@ -132,9 +135,6 @@
                         <button class="btn btn-outline-primary" type="button" onclick="addCategory()">
                             <i class="fas fa-plus"></i> Add Category
                         </button>
-                    </div>
-                    <div class="card-footer text-center">
-                        <button class="btn btn-secondary" onclick="goBack()">Back</button>
                     </div>
                 </div>
             </div>

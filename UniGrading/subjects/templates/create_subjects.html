@@ -6,6 +6,7 @@
     <title>Create Subject</title>
     {% load static %}
     {% load subject_filters %}
+    {% load breadcrumbs %}
     <link rel="stylesheet" href="{% static 'css/styles.css' %}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
@@ -13,10 +14,6 @@
     <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
     <script>
-        function goBack() {
-            window.history.back();
-        }
-
         function addCategory() {
             const categoryList = document.getElementById('category-list');
             const newCategory = document.createElement('div');
@@ -62,6 +59,9 @@
 </head>
 <body>
     <div class="container mt-5">
+        <nav aria-label="breadcrumb">
+            {% breadcrumbs %}
+        </nav>
         <div class="row justify-content-center">
             <div class="col-md-8">
                 <div class="card shadow-sm no-hover-card">
@@ -71,6 +71,7 @@
                     <div class="card-body">
                         <form method="post" onsubmit="handleSubmit(event)">
                             {% csrf_token %}
+                            <input type="hidden" id="next" name="next" value="{{ next }}">
                             <div class="form-group">
                                 <label for="id_name">Subject Name</label>
                                 {{ form.name|add_class:"form-control" }}
@@ -121,7 +122,6 @@
                             </div>
                             <div class="text-center">
                                 <button type="submit" class="btn btn-success">Create Subject</button>
-                                <button type="button" class="btn btn-secondary" onclick="goBack()">Back</button>
                             </div>
                         </form>
                     </div>

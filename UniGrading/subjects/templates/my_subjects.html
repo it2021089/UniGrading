@@ -5,21 +5,33 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>My Subjects</title>
     {% load static %}
+    {% load breadcrumbs %}
     <link rel="stylesheet" href="{% static 'css/styles.css' %}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
     <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <script>
+        $('#deleteModal').on('show.bs.modal', function (event) {
+            var button = $(event.relatedTarget);
+            var subjectId = button.data('subject-id');
+            var subjectName = button.data('subject-name');
+            var modal = $(this);
+            modal.find('#subjectName').text(subjectName);
+            modal.find('#deleteForm').attr('action', '/subject/' + subjectId + '/delete/');
+        });
+    </script>
 </head>
 <body>
     <div class="container mt-5">
-        <h2 class="text-center mb-4">My Subjects</h2>
-        {% if user.role == 'professor' %}
-            <div class="text-center mb-4">
-                <button class="btn btn-primary" onclick="window.location.href='{% url 'create_subject' %}'">Create Subject</button>
-            </div>
-        {% endif %}
+        <nav aria-label="breadcrumb">
+            {% breadcrumbs %}
+        </nav>        
+        <div class="d-flex justify-content-between mb-3">
+            <h2>My Subjects</h2>
+            <button class="btn btn-primary" onclick="window.location.href='{% url 'create_subject' %}?next={{ request.path }}'">Create Subject</button>
+        </div>
         <div class="row">
             {% for subject in subjects %}
                 <div class="col-md-4">
@@ -34,7 +46,7 @@
                                     {{ subject.professor.email }}
                                 {% endif %}
                             </small></p>
-                            <a href="{% url 'subject_detail' subject.pk %}" class="btn btn-outline-primary">View Details</a>
+                            <a href="{% url 'subject_detail' subject.pk %}?next={{ request.path }}" class="btn btn-outline-primary">View Details</a>
                             <button type="button" class="btn btn-outline-danger" data-toggle="modal" data-target="#deleteModal" data-subject-id="{{ subject.pk }}" data-subject-name="{{ subject.name }}">
                                 <i class="fas fa-trash-alt"></i>
                             </button>
@@ -80,17 +92,14 @@
                 </ul>
             </nav>
         </div>
-        <div class="text-center">
-            <button class="btn btn-secondary" type="button" onclick="goBack()">Back</button>
-        </div>
     </div>
 
-    <!-- Delete Confirmation Modal -->
-    <div class="modal fade" id="deleteModal" tabindex="-1" aria-labelledby="deleteModalLabel" aria-hidden="true">
-        <div class="modal-dialog">
+    <!-- Delete Modal -->
+    <div class="modal fade" id="deleteModal" tabindex="-1" role="dialog" aria-labelledby="deleteModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="deleteModalLabel">Confirm Delete</h5>
+                    <h5 class="modal-title" id="deleteModalLabel">Delete Subject</h5>
                     <button type="button" class="close" data-dismiss="modal" aria-label="Close">
                         <span aria-hidden="true">&times;</span>
                     </button>
@@ -108,20 +117,5 @@
             </div>
         </div>
     </div>
-
-    <script>
-        function goBack() {
-            window.history.back();
-        }
-
-        $('#deleteModal').on('show.bs.modal', function (event) {
-            var button = $(event.relatedTarget);
-            var subjectId = button.data('subject-id');
-            var subjectName = button.data('subject-name');
-            var modal = $(this);
-            modal.find('#subjectName').text(subjectName);
-            modal.find('#deleteForm').attr('action', '/subject/' + subjectId + '/delete/');
-        });
-    </script>
 </body>
 </html>

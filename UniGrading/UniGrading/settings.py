@@ -41,7 +41,8 @@ INSTALLED_APPS = [
     'users',
     'subjects',
     'assignments',
-    'grades'
+    'grades',
+    'UniGrading',
 ]
 JAZZMIN_SETTINGS = {
     "site_title": "UniGrading Admin",
@@ -87,6 +88,8 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'UniGrading.middleware.BreadcrumbMiddleware',
+
 ]
 
 ROOT_URLCONF = 'UniGrading.urls'

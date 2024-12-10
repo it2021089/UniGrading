@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Category Detail</title>
+    {% load static %}
+    {% load breadcrumbs %}
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
+    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <script>
+        function addFolder() {
+            const name = document.getElementById('new-folder-name').value.trim();
+            if (name === '') {
+                alert('Folder name cannot be empty.');
+                return;
+            }
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.innerHTML = `
+                {% csrf_token %}
+                <input type="hidden" name="new_subcategory" value="${name}">
+            `;
+            document.body.appendChild(form);
+            form.submit();
+        }
+
+        function addFile() {
+            const fileInput = document.getElementById('file-input');
+            if (fileInput.files.length === 0) {
+                alert('Please select a file to upload.');
+                return;
+            }
+            const form = document.createElement('form');
+            form.method = 'POST';
+            form.enctype = 'multipart/form-data';
+            form.innerHTML = `
+                {% csrf_token %}
+                <input type="hidden" name="new_file" value="true">
+            `;
+            form.appendChild(fileInput.cloneNode(true));
+            document.body.appendChild(form);
+            form.submit();
+        }
+
+        $('#deleteModal').on('show.bs.modal', function (event) {
+            var button = $(event.relatedTarget);
+            var itemId = button.data('item-id');
+            var itemName = button.data('item-name');
+            var deleteUrl = button.data('delete-url');
+            var modal = $(this);
+            modal.find('#itemName').text(itemName);
+            modal.find('#deleteForm').attr('action', deleteUrl);
+        });
+    </script>
+</head>
+<body>
+    <div class="container mt-5">
+        <nav aria-label="breadcrumb">
+            {% breadcrumbs %}
+        </nav>
+        <div class="row justify-content-center">
+            <div class="col-md-8">
+                <div class="card shadow-sm no-hover-card">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <h4 class="mb-0">{{ category.name }}</h4>
+                    </div>
+                    <div class="card-body">
+                        <h5>Files and Folders</h5>
+                        <ul class="list-group mb-3" id="file-folder-list">
+                            {% for subcategory in category.subcategories.all %}
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <a href="{% url 'category_detail' subcategory.pk %}" class="text-decoration-none">{{ subcategory.name }}</a>
+                                    <button class="btn btn-outline-danger btn-sm" data-toggle="modal" data-target="#deleteModal" data-item-id="{{ subcategory.pk }}" data-item-name="{{ subcategory.name }}" data-delete-url="{% url 'delete_subcategory' subcategory.pk %}">
+                                        <i class="fas fa-trash-alt"></i>
+                                    </button>
+                                </li>
+                            {% endfor %}
+                            {% for file in category.files.all %}
+                                <li class="list-group-item d-flex justify-content-between align-items-center">
+                                    <a href="{{ file.file.url }}" class="text-decoration-none">{{ file.name }}</a>
+                                    <button class="btn btn-outline-danger btn-sm" data-toggle="modal" data-target="#deleteModal" data-item-id="{{ file.pk }}" data-item-name="{{ file.name }}" data-delete-url="{% url 'delete_file' file.pk %}">
+                                        <i class="fas fa-trash-alt"></i>
+                                    </button>
+                                </li>
+                            {% endfor %}
+                        </ul>
+                        <div class="input-group mb-3">
+                            <input type="text" id="new-folder-name" class="form-control" placeholder="New Folder Name">
+                            <div class="input-group-append">
+                                <button class="btn btn-outline-primary" type="button" onclick="addFolder()">
+                                    <i class="fas fa-plus"></i> Add Folder
+                                </button>
+                            </div>
+                        </div>
+                        <div class="input-group mb-3">
+                            <input type="file" id="file-input" class="form-control-file">
+                            <div class="input-group-append">
+                                <button class="btn btn-outline-primary" type="button" onclick="addFile()">
+                                    <i class="fas fa-upload"></i> Upload File
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Modal -->
+    <div class="modal fade" id="deleteModal" tabindex="-1" role="dialog" aria-labelledby="deleteModalLabel" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="deleteModalLabel">Delete Item</h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                </div>
+                <div class="modal-body">
+                    Are you sure you want to delete the item <strong id="itemName"></strong>?
+                </div>
+                <div class="modal-footer">
+                    <form method="post" action="" id="deleteForm">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-danger">Yes, Delete</button>
+                    </form>
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

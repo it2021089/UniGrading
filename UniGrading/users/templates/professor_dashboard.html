@@ -1,27 +1,27 @@
 <!DOCTYPE html>
-<html lang="el">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Professor Dashboard</title>
     {% load static %}
+    {% load breadcrumbs %}
     <link rel="stylesheet" href="{% static 'css/styles.css' %}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
-    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
 </head>
 <body>
     <div class="container mt-5">
-        <h2 class="text-center mb-4">Professor Dashboard</h2>
-        <div class="row">
+        <nav aria-label="breadcrumb">
+            {% breadcrumbs %}
+        </nav>
+        <div class="row justify-content-center">
             <div class="col-md-4">
                 <div class="card shadow-sm mb-4">
                     <div class="card-body text-center">
-                        <a href="{% url 'my_subjects' %}" class="stretched-link text-decoration-none text-dark">
+                        <a href="{% url 'my_subjects' %}?next={{ request.path }}" class="stretched-link text-decoration-none text-dark">
                             <i class="fas fa-book fa-3x mb-3 icon-animate"></i>
-                            <h5>Subjects</h5>
+                            <h5>My Subjects</h5>
                         </a>
                     </div>
                 </div>
@@ -29,7 +29,7 @@
             <div class="col-md-4">
                 <div class="card shadow-sm mb-4">
                     <div class="card-body text-center">
-                        <a href="{% url 'profile' %}" class="stretched-link text-decoration-none text-dark">
+                        <a href="{% url 'profile' %}?next={{ request.path }}" class="stretched-link text-decoration-none text-dark">
                             <i class="fas fa-user fa-3x mb-3 icon-animate"></i>
                             <h5>Profile</h5>
                         </a>
