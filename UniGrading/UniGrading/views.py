@@ -6,8 +6,8 @@ from users.models import CustomUser
 def home(request):
     role = request.user.role
     if role == 'professor':
-        return redirect('professor_dashboard')
+        return redirect('users:professor_dashboard')
     elif role == 'student':
-        return redirect('student_dashboard')
+        return redirect('users:student_dashboard')
     else:
-        return redirect('login')  
+        return redirect('users:login')  

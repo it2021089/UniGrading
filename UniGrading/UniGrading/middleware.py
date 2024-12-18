@@ -17,8 +17,8 @@ class BreadcrumbMiddleware(MiddlewareMixin):
         custom_breadcrumb_names = {
             'professor_dashboard': 'Professor Dashboard',
             'my_subjects': 'My Subjects',
-            'subject_detail': lambda kwargs: Subject.objects.filter(pk=kwargs.get('pk')).first().name if kwargs.get('pk') else 'Unknown Subject',
-            'category_detail': lambda kwargs: Category.objects.filter(pk=kwargs.get('pk')).first().name if kwargs.get('pk') else 'Unknown Category',
+            'subject_detail': lambda kwargs: Subject.objects.filter(pk=kwargs.get('pk')).exists() and Subject.objects.get(pk=kwargs.get('pk')).name or None,
+            'category_detail': lambda kwargs: Category.objects.filter(pk=kwargs.get('pk')).exists() and Category.objects.get(pk=kwargs.get('pk')).name or None,
         }
 
         # Pages to exclude from breadcrumbs (e.g., Login)
@@ -41,8 +41,22 @@ class BreadcrumbMiddleware(MiddlewareMixin):
         if callable(breadcrumb_name):
             breadcrumb_name = breadcrumb_name(view_kwargs)
 
+        # If the breadcrumb entity no longer exists, skip adding it
+        if breadcrumb_name is None:
+            return None
+
         # Get breadcrumb history
         breadcrumb_history = request.session['breadcrumb_history']
+
+        # Filter out invalid (deleted) breadcrumbs from the history
+        valid_breadcrumb_history = []
+        for breadcrumb in breadcrumb_history:
+            if breadcrumb['url'] == current_url or self.is_breadcrumb_valid(breadcrumb):
+                valid_breadcrumb_history.append(breadcrumb)
+
+        # Update breadcrumb history with only valid breadcrumbs
+        breadcrumb_history = valid_breadcrumb_history
+        request.session['breadcrumb_history'] = breadcrumb_history
 
         # Check if the current URL already exists in history
         breadcrumb_exists_in_history = any(breadcrumb['url'] == current_url for breadcrumb in breadcrumb_history)
@@ -68,3 +82,17 @@ class BreadcrumbMiddleware(MiddlewareMixin):
         request.session['breadcrumbs'] = breadcrumbs
 
         return None
+
+    def is_breadcrumb_valid(self, breadcrumb):
+        """
+        Check if a breadcrumb is still valid (not deleted).
+        """
+        if 'category_detail' in breadcrumb['url']:
+            # Check if the category still exists
+            category_id = breadcrumb['url'].split('/')[-1]  
+            return Category.objects.filter(pk=category_id).exists()
+        elif 'subject_detail' in breadcrumb['url']:
+            # Check if the subject still exists
+            subject_id = breadcrumb['url'].split('/')[-1]  
+            return Subject.objects.filter(pk=subject_id).exists()
+        return True

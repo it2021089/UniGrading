@@ -1,12 +1,17 @@
 from django.urls import path
-from . import views
+from .views import (
+    MySubjectsView, CreateSubjectView, SubjectDetailView,
+    CategoryDetailView, delete_file, delete_subcategory, delete_subject
+)
+
+app_name = "subjects"
 
 urlpatterns = [
-    path('subjects/', views.my_subjects, name='my_subjects'),
-    path('create_subject/', views.create_subject, name='create_subject'),
-    path('subject/<int:pk>/', views.subject_detail, name='subject_detail'),
-    path('subject/<int:pk>/delete/', views.delete_subject, name='delete_subject'),
-    path('category/<int:pk>/', views.category_detail, name='category_detail'),
-    path('file/delete/<int:pk>/', views.delete_file, name='delete_file'),
-    path('subcategory/delete/<int:pk>/', views.delete_subcategory, name='delete_subcategory'),
+    path("", MySubjectsView.as_view(), name="my_subjects"),
+    path("create/", CreateSubjectView.as_view(), name="create_subject"),
+    path("subject/<int:pk>/", SubjectDetailView.as_view(), name="subject_detail"),
+    path("subject/<int:pk>/delete/", delete_subject, name="delete_subject"), 
+    path("category/<int:pk>/", CategoryDetailView.as_view(), name="category_detail"),
+    path("file/<int:pk>/delete/", delete_file, name="delete_file"),
+    path("subcategory/<int:pk>/delete/", delete_subcategory, name="delete_subcategory"),
 ]

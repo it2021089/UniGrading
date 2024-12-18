@@ -9,10 +9,19 @@ class Subject(models.Model):
     def __str__(self):
         return self.name
 
+    def top_level_categories(self):
+        return self.categories.filter(parent__isnull=True)
+
+    class Meta:
+        ordering = ['name']
+
 class Category(models.Model):
     subject = models.ForeignKey(Subject, related_name='categories', on_delete=models.CASCADE)
-    name = models.CharField(max_length=100)
-    parent = models.ForeignKey('self', related_name='subcategories', on_delete=models.CASCADE, blank=True, null=True)
+    name = models.CharField(max_length=255)
+    parent = models.ForeignKey('self', null=True, blank=True, related_name='subcategories', on_delete=models.CASCADE)
+
+    class Meta:
+        unique_together = (('subject', 'name', 'parent'),)  # Allow duplicates under different parents
 
     def __str__(self):
         return self.name
