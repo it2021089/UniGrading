@@ -1,27 +1,115 @@
-{% load static %}
-{% load view_breadcrumbs %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}My Site{% endblock %}</title>
+    {% load static %}
     <link rel="stylesheet" href="{% static 'css/styles.css' %}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
     <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        body {
+            background: linear-gradient(to right, #b3cde0, #f0f0f0);
+            margin: 0;
+            padding: 0;
+            font-family: 'Roboto', sans-serif;
+            display: flex;
+        }
+
+        .side-menu {
+            position: fixed;
+            top: 0;
+            left: 0;
+            height: 100vh;
+            width: 45px;
+            background-color: #ffffff;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            overflow-x: hidden;
+            transition: width 0.3s ease;
+            z-index: 1000;
+        }
+
+        .side-menu:hover {
+            width: 200px;
+        }
+
+        .menu-item {
+            display: flex;
+            align-items: center;
+            padding: 15px 10px;
+            transition: background-color 0.3s ease;
+            text-decoration: none;
+            color: #555;
+            font-size: 0.9rem;
+            white-space: nowrap;
+        }
+
+        .menu-item:hover {
+            background-color: #f0f0f0;
+        }
+
+        .menu-item i {
+            font-size: 1.2rem;
+            margin-right: 15px;
+            transition: transform 0.3s ease;
+        }
+
+        .menu-item span {
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+
+        .side-menu:hover .menu-item span {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .main-content {
+            margin-left: 60px;
+            padding: 20px;
+            flex: 1; /* Ensure main content fills the available space */
+            transition: margin-left 0.3s ease;
+        }
+
+        .side-menu:hover ~ .main-content {
+            margin-left: 200px;
+        }
+
+        .main-content > * {
+            max-width: 100%; /* Ensure content does not overflow */
+        }
+    </style>
 </head>
 <body>
-    <div class="container mt-4">
-        <nav aria-label="breadcrumb">
-            {% render_breadcrumbs "view_breadcrumbs/bootstrap5.html" %}
-        </nav>
-
-        <div>
-            {% block content %}
-            {% endblock %}
-        </div>
+    <!-- Sidebar Menu -->
+    <div class="side-menu">
+        <a href="{% url 'users:professor_dashboard' %}" class="menu-item">
+            <i class="fas fa-home"></i>
+            <span>Dashboard</span>
+        </a>
+        <a href="{% url 'subjects:my_subjects' %}" class="menu-item">
+            <i class="fas fa-book"></i>
+            <span>My Subjects</span>
+        </a>
+        <a href="{% url 'users:profile' %}" class="menu-item">
+            <i class="fas fa-user"></i>
+            <span>Profile</span>
+        </a>
+        <a href="{% url 'users:logout' %}" class="menu-item">
+            <i class="fas fa-sign-out-alt"></i>
+            <span class="text-danger">Logout</span>
+        </a>
     </div>
 
+    <!-- Main Content -->
+    <div class="main-content">
+        {% block content %}
+        {% endblock %}
+    </div>
+
+    <!-- JavaScript -->
     <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>

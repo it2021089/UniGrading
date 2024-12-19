@@ -6,7 +6,7 @@
 {% block title %}My Subjects{% endblock %}
 
 {% block content %}
-<!-- Breadcrumb Navigation -->
+<div class="container mt-5">
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
         {% for name, url in breadcrumbs %}
@@ -17,7 +17,6 @@
     </ol>
 </nav>
 
-<div class="container mt-5">
     <div class="d-flex justify-content-between mb-3">
         <h2>My Subjects</h2>
         <a href="{% url 'subjects:create_subject' %}" class="btn btn-primary">

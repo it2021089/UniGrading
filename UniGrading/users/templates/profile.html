@@ -1,47 +1,24 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Profile</title>
-    {% extends 'base.html' %}
-    {% load static %}
-    {% load custom_filters %}
-    {% load view_breadcrumbs %}
-    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/5.15.3/css/all.min.css">
-    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
-    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
-    <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const form = document.querySelector('form');
-            const originalData = new FormData(form);
-            const errorMessage = document.getElementById('error-message');
+{% extends 'base.html' %}
+{% load static %}
+{% load custom_filters %}
+{% load view_breadcrumbs %}
 
-            form.addEventListener('submit', function(event) {
-                const currentData = new FormData(form);
-                let isChanged = false;
+{% block title %}Profile{% endblock %}
 
-                for (let [key, value] of currentData.entries()) {
-                    if (value !== originalData.get(key)) {
-                        isChanged = true;
-                        break;
-                    }
-                }
+{% block content %}
+<style>
+    .card {
+        transition: none !important; /* Disable transition animation */
+    }
 
-                if (!isChanged) {
-                    event.preventDefault();
-                    errorMessage.style.display = 'block';
-                }
-            });
-        });
-    </script>
-</head>
-<body>
-    {% block content %}
-    <nav aria-label="breadcrumb">
+    .card:hover {
+        transform: none !important; /* Disable transform on hover */
+    }
+</style>
+
+<div class="container mt-4" style="width: 70%; min-width: 400px;">
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="mb-4">
         <ol class="breadcrumb">
             {% for name, url in breadcrumbs %}
                 <li class="breadcrumb-item">
@@ -50,71 +27,121 @@
             {% endfor %}
         </ol>
     </nav>
-        <h2>Profile</h2>
-        <form method="post">
-            {% csrf_token %}
-            <div class="form-group">
-                <label for="id_username">Username:</label>
-                {{ form.username|add_class:"form-control" }}
-                {% for error in form.username.errors %}
-                    <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
-                {% endfor %}
+
+    <!-- Profile Card -->
+    <div class="d-flex justify-content-center">
+        <div class="card shadow-sm" style="width: 50%; min-width: 400px;">
+            <div class="card-header text-center">
+                <h4 class="mb-0">Profile</h4>
             </div>
-            <div class="form-group">
-                <label for="id_first_name">First Name:</label>
-                {{ form.first_name|add_class:"form-control" }}
-                {% for error in form.first_name.errors %}
-                    <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
-                {% endfor %}
+            <div class="card-body">
+                <form method="post">
+                    {% csrf_token %}
+                    <!-- Row 1: Username, First Name, Last Name -->
+                    <div class="form-row">
+                        <div class="form-group col-md-4">
+                            <label for="id_username">Username:</label>
+                            {{ form.username|add_class:"form-control form-control-sm" }}
+                            {% for error in form.username.errors %}
+                                <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label for="id_first_name">First Name:</label>
+                            {{ form.first_name|add_class:"form-control form-control-sm" }}
+                            {% for error in form.first_name.errors %}
+                                <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label for="id_last_name">Last Name:</label>
+                            {{ form.last_name|add_class:"form-control form-control-sm" }}
+                            {% for error in form.last_name.errors %}
+                                <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <!-- Row 2: Email, Institution, Role -->
+                    <div class="form-row">
+                        <div class="form-group col-md-4">
+                            <label for="id_email">Email:</label>
+                            {{ form.email|add_class:"form-control form-control-sm" }}
+                            {% for error in form.email.errors %}
+                                <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
+                            {% endfor %}
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label for="id_institution">Institution:</label>
+                            <input type="text" class="form-control form-control-sm" value="{{ form.instance.institution.name }}" readonly>
+                        </div>
+                        <div class="form-group col-md-4">
+                            <label for="id_role">Role:</label>
+                            <input type="text" class="form-control form-control-sm" value="{{ form.instance.get_role_display }}" readonly>
+                        </div>
+                    </div>
+
+                    <!-- Password Section -->
+                    <div class="form-group">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="change-password-btn">Change Password</button>
+                    </div>
+                    <div id="password-fields" style="display: none;">
+                        <div class="form-row">
+                            <div class="form-group col-md-4">
+                                <label for="id_password">New Password:</label>
+                                {{ form.password|add_class:"form-control form-control-sm" }}
+                            </div>
+                            <div class="form-group col-md-4">
+                                <label for="id_confirm_password">Confirm New Password:</label>
+                                {{ form.confirm_password|add_class:"form-control form-control-sm" }}
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Error Message -->
+                    <div id="error-message" class="alert alert-danger" style="display: none;">
+                        No changes detected. Please make some changes before submitting.
+                    </div>
+
+                    <!-- Save Changes Button -->
+                    <div class="text-center mt-3">
+                        <button type="submit" class="btn btn-primary btn-sm px-4">Save Changes</button>
+                    </div>
+                </form>
             </div>
-            <div class="form-group">
-                <label for="id_last_name">Last Name:</label>
-                {{ form.last_name|add_class:"form-control" }}
-                {% for error in form.last_name.errors %}
-                    <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
-                {% endfor %}
-            </div>
-            <div class="form-group">
-                <label for="id_email">Email:</label>
-                {{ form.email|add_class:"form-control" }}
-                {% for error in form.email.errors %}
-                    <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
-                {% endfor %}
-            </div>
-            <div class="form-group">
-                <label for="id_institution">Institution:</label>
-                <input type="text" class="form-control" value="{{ form.instance.institution.name }}" readonly>
-                {% for error in form.institution.errors %}
-                    <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
-                {% endfor %}
-            </div>
-            <div class="form-group">
-                <label for="id_role">Role:</label>
-                <input type="text" class="form-control" value="{{ form.instance.get_role_display }}" readonly>
-                {% for error in form.role.errors %}
-                    <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
-                {% endfor %}
-            </div>
-            <div class="form-group">
-                <label for="id_password">New Password:</label>
-                {{ form.password|add_class:"form-control" }}
-                {% for error in form.password.errors %}
-                    <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
-                {% endfor %}
-            </div>
-            <div class="form-group">
-                <label for="id_confirm_password">Confirm New Password:</label>
-                {{ form.confirm_password|add_class:"form-control" }}
-                {% for error in form.confirm_password.errors %}
-                    <div class="error-message"><span class="error-icon">✖</span> {{ error }}</div>
-                {% endfor %}
-            </div>
-            <div id="error-message" class="alert alert-danger" style="display: none;">
-                No changes detected. Please make some changes before submitting.
-            </div>
-            <button type="submit" class="btn btn-primary">Save Changes</button>
-        </form>
+        </div>
     </div>
-    {% endblock %}
-</body>
-</html>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', function () {
+        const form = document.querySelector('form');
+        const originalData = new FormData(form);
+        const errorMessage = document.getElementById('error-message');
+        const changePasswordBtn = document.getElementById('change-password-btn');
+        const passwordFields = document.getElementById('password-fields');
+
+        changePasswordBtn.addEventListener('click', function () {
+            passwordFields.style.display = 'block';
+            changePasswordBtn.style.display = 'none';
+        });
+
+        form.addEventListener('submit', function (event) {
+            const currentData = new FormData(form);
+            let isChanged = false;
+
+            for (let [key, value] of currentData.entries()) {
+                if (value !== originalData.get(key)) {
+                    isChanged = true;
+                    break;
+                }
+            }
+
+            if (!isChanged) {
+                event.preventDefault();
+                errorMessage.style.display = 'block';
+            }
+        });
+    });
+</script>
+{% endblock %}

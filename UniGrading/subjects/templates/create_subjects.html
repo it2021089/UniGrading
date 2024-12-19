@@ -6,90 +6,82 @@
 {% block title %}Create Subject{% endblock %}
 
 {% block content %}
-<nav aria-label="breadcrumb">
-    <ol class="breadcrumb">
-        {% for name, url in breadcrumbs %}
-            <li class="breadcrumb-item">
-                <a href="{{ url }}">{{ name }}</a>
-            </li>
-        {% endfor %}
-    </ol>
-</nav>
+<div class="container mt-5">
+    <!-- Breadcrumb -->
+    <nav aria-label="breadcrumb" class="mb-4">
+        <ol class="breadcrumb">
+            {% for name, url in breadcrumbs %}
+                <li class="breadcrumb-item">
+                    <a href="{{ url }}">{{ name }}</a>
+                </li>
+            {% endfor %}
+        </ol>
+    </nav>
 
-    <!-- Page Content -->
-    <div class="row justify-content-center">
-        <div class="col-md-8">
-            <div class="card shadow-sm no-hover-card">
-                <div class="card-header bg-primary text-white">
-                    <h4 class="mb-0">Create Subject</h4>
-                </div>
-
-                <div class="card-body">
-                    <form method="post" onsubmit="handleSubmit(event)">
-                        {% csrf_token %}
-                        <!-- Subject Name -->
-                        <div class="form-group">
-                            <label for="id_name">Subject Name</label>
-                            {{ form.name|add_class:"form-control" }}
-                        </div>
-
-                        <!-- Description -->
-                        <div class="form-group">
-                            <label for="id_description">Description</label>
-                            {{ form.description|add_class:"form-control" }}
-                        </div>
-
-                        <!-- Categories -->
-                        <div class="form-group">
-                            <label>Categories</label>
-                            <div id="category-list">
-                                <div class="input-group mb-3">
-                                    <input type="text" name="categories" class="form-control" value="Courses" readonly>
-                                    <div class="input-group-append">
-                                        <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
-                                            <i class="fas fa-trash-alt"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="input-group mb-3">
-                                    <input type="text" name="categories" class="form-control" value="Assignments" readonly>
-                                    <div class="input-group-append">
-                                        <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
-                                            <i class="fas fa-trash-alt"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="input-group mb-3">
-                                    <input type="text" name="categories" class="form-control" value="Tests" readonly>
-                                    <div class="input-group-append">
-                                        <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
-                                            <i class="fas fa-trash-alt"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                                <div class="input-group mb-3">
-                                    <input type="text" name="categories" class="form-control" value="Other" readonly>
-                                    <div class="input-group-append">
-                                        <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
-                                            <i class="fas fa-trash-alt"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            <button type="button" class="btn btn-outline-primary" onclick="addCategory()">
-                                <i class="fas fa-plus"></i> Add Category
-                            </button>
-                        </div>
-
-                        <!-- Submit Button -->
-                        <div class="text-center">
-                            <button type="submit" class="btn btn-success">Create Subject</button>
-                        </div>
-                    </form>
-                </div>
-            </div>
+        <div class="card-header bg-primary text-white">
+            <h4 class="mb-0 text-center">Create Subject</h4>
         </div>
-    </div>
+        <div class="card-body">
+            <!-- Form -->
+            <form method="post" onsubmit="handleSubmit(event)">
+                {% csrf_token %}
+                <div class="form-group">
+                    <label for="id_name">Subject Name</label>
+                    {{ form.name|add_class:"form-control" }}
+                </div>
+
+                <div class="form-group">
+                    <label for="id_description">Description</label>
+                    {{ form.description|add_class:"form-control" }}
+                </div>
+
+                <div class="form-group">
+                    <label>Categories</label>
+                    <div id="category-list">
+                        <div class="input-group mb-3">
+                            <input type="text" name="categories" class="form-control" value="Courses" readonly>
+                            <div class="input-group-append">
+                                <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="input-group mb-3">
+                            <input type="text" name="categories" class="form-control" value="Assignments" readonly>
+                            <div class="input-group-append">
+                                <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="input-group mb-3">
+                            <input type="text" name="categories" class="form-control" value="Tests" readonly>
+                            <div class="input-group-append">
+                                <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="input-group mb-3">
+                            <input type="text" name="categories" class="form-control" value="Other" readonly>
+                            <div class="input-group-append">
+                                <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
+                                    <i class="fas fa-trash-alt"></i>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <button type="button" class="btn btn-outline-primary" onclick="addCategory()">
+                        <i class="fas fa-plus"></i> Add Category
+                    </button>
+                </div>
+
+                <!-- Submit Button -->
+                <div class="text-center">
+                    <button type="submit" class="btn btn-success">Create Subject</button>
+                </div>
+            </form>
+        </div>
 </div>
 
 <!-- JavaScript for Dynamic Category Management -->
