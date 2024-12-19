@@ -30,7 +30,7 @@
             z-index: 1000;
         }
 
-        .side-menu:hover {
+        .side-menu.open {
             width: 200px;
         }
 
@@ -61,7 +61,7 @@
             transition: opacity 0.3s ease, visibility 0.3s ease;
         }
 
-        .side-menu:hover .menu-item span {
+        .side-menu.open .menu-item span {
             opacity: 1;
             visibility: visible;
         }
@@ -73,7 +73,7 @@
             transition: margin-left 0.3s ease;
         }
 
-        .side-menu:hover ~ .main-content {
+        .side-menu.open ~ .main-content {
             margin-left: 200px;
         }
 
@@ -84,7 +84,11 @@
 </head>
 <body>
     <!-- Sidebar Menu -->
-    <div class="side-menu">
+    <div class="side-menu" id="side-menu">
+        <a href="javascript:void(0);" class="menu-item" onclick="toggleMenu()">
+            <i class="fas fa-bars"></i>
+            <span>Menu</span>
+        </a>
         <a href="{% url 'users:professor_dashboard' %}" class="menu-item">
             <i class="fas fa-home"></i>
             <span>Dashboard</span>
@@ -113,5 +117,11 @@
     <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.2/dist/umd/popper.min.js"></script>
     <script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+    <script>
+        function toggleMenu() {
+            const sideMenu = document.getElementById('side-menu');
+            sideMenu.classList.toggle('open');
+        }
+    </script>
 </body>
 </html>
