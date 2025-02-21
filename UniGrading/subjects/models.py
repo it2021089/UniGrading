@@ -21,8 +21,7 @@ class Category(models.Model):
     parent = models.ForeignKey('self', null=True, blank=True, related_name='subcategories', on_delete=models.CASCADE)
 
     class Meta:
-        unique_together = (('subject', 'name', 'parent'),)  # Allow duplicates under different parents
-
+        unique_together = (('subject', 'name', 'parent'),)  
     def __str__(self):
         return self.name
 

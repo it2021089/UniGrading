@@ -8,7 +8,10 @@ from .models import Subject, Category, File
 from .forms import SubjectForm
 from UniGrading.mixin import BreadcrumbMixin
 from django.db import transaction, IntegrityError
+import logging
 
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # My Subjects View
 class MySubjectsView(LoginRequiredMixin, BreadcrumbMixin, ListView):
@@ -40,7 +43,6 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        # Add breadcrumbs context
         if self.request.user.role == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
         elif self.request.user.role == "student":
@@ -59,7 +61,6 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
         subject = form.save(commit=False)
         subject.professor = self.request.user
 
-        # Wrap in transaction to ensure atomicity
         with transaction.atomic():
             subject.save()
 
@@ -68,7 +69,7 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
             for category_name in default_categories:
                 Category.objects.get_or_create(subject=subject, name=category_name, parent=None)
 
-            # Additional categories
+            # Additional categories from POST request
             additional_categories = self.request.POST.getlist('categories')
             for category_name in additional_categories:
                 category_name = category_name.strip()
@@ -79,6 +80,7 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
 
     def get_success_url(self):
         return reverse_lazy("subjects:my_subjects")
+
 class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     model = Subject
     template_name = "subject_detail.html"
@@ -101,8 +103,10 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         
-        categories = Category.objects.filter(subject=self.object)
-        print("Fetched Categories:", categories)  # Print to console for debugging
+        # Fetch categories and log the results
+        categories = Category.objects.filter(subject=self.object).select_related('parent')
+        logger.debug("Fetched Categories: %s", categories)
+        
         context["categories"] = categories
         return context
 
@@ -119,6 +123,7 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             category.delete()
 
         return redirect(self.request.path)
+
 # Category Detail View
 class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     model = Category
@@ -156,6 +161,12 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
         elif "new_file" in request.POST:
             file = request.FILES.get("file")
             if file:
+                # Ensure file is within size limits (e.g., 10MB)
+                if file.size > 10 * 1024 * 1024:
+                    logger.error("File size exceeded the limit")
+                    return redirect(self.request.path)
+
+                # Ensure the file is saved using the correct storage backend
                 File.objects.create(category=category, name=file.name, file=file)
 
         return redirect(self.request.path)
@@ -166,7 +177,7 @@ def delete_subject(request, pk):
     subject = get_object_or_404(Subject, pk=pk)
 
     if request.user != subject.professor:
-        return redirect("subjects:my_subjects")  # Unauthorized users are redirected
+        return redirect("subjects:my_subjects")
 
     subject.delete()
     return redirect("subjects:my_subjects")
@@ -177,14 +188,18 @@ def delete_file(request, pk):
     file = get_object_or_404(File, pk=pk)
     category_pk = file.category.pk
     file.delete()
-    return redirect("category_detail", pk=category_pk)
+    return redirect("subjects:category_detail", pk=category_pk)
 
 # Delete Subcategory (Function-Based View)
 @login_required
 def delete_subcategory(request, pk):
     subcategory = get_object_or_404(Category, pk=pk)
     parent_category_pk = subcategory.parent.pk if subcategory.parent else subcategory.subject.pk
-    subcategory.delete()
 
-    # Redirect to category_detail view with proper namespace
+    # Prevent deletion if there are associated files or subcategories
+    if subcategory.files.exists() or subcategory.subcategories.exists():
+        logger.error("Category has files or subcategories and cannot be deleted")
+        return redirect("subjects:category_detail", pk=parent_category_pk)
+
+    subcategory.delete()
     return redirect("subjects:category_detail", pk=parent_category_pk)

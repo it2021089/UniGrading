@@ -7,17 +7,17 @@
 {% block content %}
 <!-- Breadcrumb Navigation -->
 <div class="container mt-5">
-<nav aria-label="breadcrumb">
-    <ol class="breadcrumb">
-        {% for name, url in breadcrumbs %}
-            <li class="breadcrumb-item">
-                <a href="{{ url }}">{{ name }}</a>
-            </li>
-        {% endfor %}
-    </ol>
-</nav>
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            {% for name, url in breadcrumbs %}
+                <li class="breadcrumb-item">
+                    <a href="{{ url }}">{{ name }}</a>
+                </li>
+            {% endfor %}
+        </ol>
+    </nav>
 
-<!-- Category Content -->
+    <!-- Category Content -->
     <div class="row justify-content-center">
         <div class="col-md-8">
             <div class="card shadow-sm no-hover-card">
@@ -119,7 +119,8 @@
 </div>
 
 <script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
-<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script><script>
+<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+<script>
     function addFolder() {
         const name = document.getElementById('new-folder-name').value.trim();
         if (name === '') {
@@ -144,12 +145,20 @@
         }
         const form = document.createElement('form');
         form.method = 'POST';
-        form.enctype = 'multipart/form-data';
+        form.enctype = 'multipart/form-data';  // Ensure we handle file uploads correctly
         form.innerHTML = `
             {% csrf_token %}
             <input type="hidden" name="new_file" value="true">
         `;
-        form.appendChild(fileInput.cloneNode(true));
+
+        // Add the file input to the form
+        const fileField = document.createElement('input');
+        fileField.type = 'file';
+        fileField.name = 'file';
+        fileField.files = fileInput.files;
+        form.appendChild(fileField);
+
+        // Submit the form
         document.body.appendChild(form);
         form.submit();
     }

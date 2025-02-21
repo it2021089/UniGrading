@@ -44,6 +44,7 @@ INSTALLED_APPS = [
     'assignments',
     'grades',
     'UniGrading',
+    'storages',
 ]
 JAZZMIN_SETTINGS = {
     "site_title": "UniGrading Admin",
@@ -76,8 +77,6 @@ AUTHENTICATION_BACKENDS = [
     'users.backends.CustomAuthentication',
     'django.contrib.auth.backends.ModelBackend',  
 ]
-STATIC_URL = 'static/'
-
 STATICFILES_DIRS = [
     BASE_DIR / "static",
 ]
@@ -123,6 +122,14 @@ DATABASES = {
         'NAME': BASE_DIR / 'db.sqlite3',
     }
 }
+DEFAULT_FILE_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+
+AWS_ACCESS_KEY_ID = 'R5I2bhDKIcYTKKkPnngu'
+AWS_SECRET_ACCESS_KEY = 'dSqooIxB6lNZ8xMfIGr1DqeLHalNeHnemD8EQrlN'
+AWS_STORAGE_BUCKET_NAME = 'files'
+AWS_S3_ENDPOINT_URL = 'http://127.0.0.1:9000/'
+AWS_S3_REGION_NAME = 'us-east-1'  # or any region
+AWS_S3_SIGNATURE_VERSION = 's3v4'
 
 LOGIN_URL = '/login/'
 
