@@ -5,8 +5,8 @@
 {% block title %}Subject Detail{% endblock %}
 
 {% block content %}
+<div class="container mt-5">
     <!-- Breadcrumbs -->
-    <div class="container mt-5">
     <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
             {% for name, url in breadcrumbs %}
@@ -18,134 +18,166 @@
     </nav>
 
     <!-- Subject Detail Content -->
-        <div class="row justify-content-center">
-            <div class="col-md-8">
-                <div class="card shadow-sm no-hover-card">
-                    <!-- Subject Header -->
-                    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
-                        <div>
-                            <input type="text" class="form-control bg-dark text-white border-0" 
-                                   value="{{ subject.name }}" readonly id="subject-name">
-                        </div>
-                        <div>
-                            <button class="btn btn-outline-light btn-sm" 
-                                    onclick="editField(document.getElementById('subject-name'), 
-                                    document.getElementById('save-name'), document.getElementById('cancel-name'))">
-                                <i class="fas fa-pencil-alt"></i>
-                            </button>
-                            <button class="btn btn-outline-success btn-sm" id="save-name" style="display: none;"
-                                    onclick="saveField(document.getElementById('subject-name'), 'name')">
-                                <i class="fas fa-check"></i>
-                            </button>
-                            <button class="btn btn-outline-danger btn-sm" id="cancel-name" style="display: none;"
-                                    onclick="cancelEdit(document.getElementById('subject-name'), '{{ subject.name }}')">
-                                <i class="fas fa-times"></i>
-                            </button>
+    <div class="row justify-content-center">
+        <div class="col-md-8">
+            <div class="card shadow-sm no-hover-card">
+                <!-- Subject Header -->
+                <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+                    <div>
+                        <input type="text" class="form-control bg-dark text-white border-0" 
+                               value="{{ subject.name }}" readonly id="subject-name">
+                    </div>
+                </div>
+
+                <!-- Subject Body -->
+                <div class="card-body">
+                    <!-- Editable Description -->
+                    <div class="mb-3">
+                        <label for="subject-description" class="form-label">Description</label>
+                        <textarea id="subject-description" class="form-control" readonly>{{ subject.description }}</textarea>
+                        <div class="mt-2">
+                            <button class="btn btn-outline-secondary btn-sm" onclick="editDescription()">Edit</button>
+                            <button class="btn btn-outline-success btn-sm" id="save-description" style="display: none;" onclick="saveDescription()">Save</button>
+                            <button class="btn btn-outline-danger btn-sm" id="cancel-description" style="display: none;" onclick="cancelEdit()">Cancel</button>
                         </div>
                     </div>
 
-                    <!-- Subject Body -->
-                    <div class="card-body">
-                        <!-- Editable Description -->
-                        <div class="mb-3">
-                            <label for="subject-description" class="form-label">Description</label>
-                            <textarea id="subject-description" class="form-control" readonly>{{ subject.description }}</textarea>
-                            <div class="mt-2">
-                                <button class="btn btn-outline-secondary btn-sm" 
-                                        onclick="editField(document.getElementById('subject-description'), 
-                                        document.getElementById('save-description'), document.getElementById('cancel-description'))">
-                                    Edit
+                    <!-- Categories -->
+                    <h5>Categories</h5>
+                    <ul class="list-group mb-3" id="categories-list">
+                        {% for category in categories %}
+                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                                <a href="{% url 'subjects:category_detail' category.pk %}" class="text-decoration-none">
+                                    {{ category.name }}
+                                </a>
+                                <button class="btn btn-outline-danger btn-sm" onclick="deleteCategory({{ category.id }})">
+                                    <i class="fas fa-trash-alt"></i>
                                 </button>
-                                <button class="btn btn-outline-success btn-sm" id="save-description" style="display: none;"
-                                        onclick="saveField(document.getElementById('subject-description'), 'description')">
-                                    Save
-                                </button>
-                                <button class="btn btn-outline-danger btn-sm" id="cancel-description" style="display: none;"
-                                        onclick="cancelEdit(document.getElementById('subject-description'), '{{ subject.description }}')">
-                                    Cancel
-                                </button>
-                            </div>
-                        </div>
+                            </li>
+                        {% empty %}
+                            <li class="list-group-item text-muted">No categories available.</li>
+                        {% endfor %}
+                    </ul>
 
-                        <!-- Categories -->
-                        <h5>Categories</h5>
-                            <ul class="list-group mb-3">
-                                {% for category in subject.top_level_categories %}
-                                <li class="list-group-item d-flex justify-content-between align-items-center">
-                                        <a href="{% url 'subjects:category_detail' category.pk %}" class="text-decoration-none">
-                                            {{ category.name }}
-                                        </a>
-                                        <form method="post" class="d-inline">
-                                            {% csrf_token %}
-                                            <input type="hidden" name="category_id" value="{{ category.id }}">
-                                            <button class="btn btn-outline-danger btn-sm" type="submit" name="remove_category">
-                                                <i class="fas fa-trash-alt"></i>
-                                            </button>
-                                        </form>
-                                    </li>
-                                {% empty %}
-                                    <li class="list-group-item text-muted">No categories available.</li>
-                                {% endfor %}
-                            </ul>
-
-                        <!-- Add New Category -->
-                        <div class="input-group mb-3">
-                            <input type="text" id="new-category-name" class="form-control" placeholder="New Category Name">
-                            <button class="btn btn-outline-primary" type="button" onclick="addCategory()">
-                                <i class="fas fa-plus"></i> Add Category
-                            </button>
-                        </div>
+                    <!-- Add New Category -->
+                    <div class="input-group mb-3">
+                        <input type="text" id="new-category-name" class="form-control" placeholder="New Category Name">
+                        <button class="btn btn-outline-primary" type="button" onclick="addCategory()">
+                            <i class="fas fa-plus"></i> Add Category
+                        </button>
                     </div>
                 </div>
             </div>
         </div>
     </div>
+</div>
 
-    <script>
-        function editField(field, saveButton, cancelButton) {
-            field.removeAttribute('readonly');
-            field.focus();
-            saveButton.style.display = 'inline-block';
-            cancelButton.style.display = 'inline-block';
+<script>
+    function editDescription() {
+        let descriptionField = document.getElementById("subject-description");
+        let saveButton = document.getElementById("save-description");
+        let cancelButton = document.getElementById("cancel-description");
+
+        descriptionField.removeAttribute("readonly");
+        descriptionField.focus();
+        saveButton.style.display = "inline-block";
+        cancelButton.style.display = "inline-block";
+    }
+
+    function cancelEdit() {
+        let descriptionField = document.getElementById("subject-description");
+        let saveButton = document.getElementById("save-description");
+        let cancelButton = document.getElementById("cancel-description");
+
+        descriptionField.setAttribute("readonly", true);
+        saveButton.style.display = "none";
+        cancelButton.style.display = "none";
+    }
+
+    function saveDescription() {
+        let descriptionField = document.getElementById("subject-description");
+        let newDescription = descriptionField.value.trim();
+
+        if (!newDescription) {
+            alert("Description cannot be empty.");
+            return;
         }
 
-        function saveField(field, name) {
-            const value = field.value.trim();
-            if (!value) {
-                alert('Value cannot be empty.');
-                return;
+        fetch(window.location.href, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-CSRFToken": "{{ csrf_token }}"
+            },
+            body: `description=${encodeURIComponent(newDescription)}`
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === "success") {
+                descriptionField.setAttribute("readonly", true);
+                document.getElementById("save-description").style.display = "none";
+                document.getElementById("cancel-description").style.display = "none";
+            } else {
+                alert("Failed to update description.");
             }
+        });
+    }
 
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.innerHTML = `
-                {% csrf_token %}
-                <input type="hidden" name="\${name}" value="\${value}">
-            `;
-            document.body.appendChild(form);
-            form.submit();
+    function addCategory() {
+        let categoryName = document.getElementById("new-category-name").value.trim();
+        if (!categoryName) {
+            alert("Category name cannot be empty.");
+            return;
         }
 
-        function cancelEdit(field, originalValue) {
-            field.value = originalValue;
-            field.setAttribute('readonly', true);
-            document.querySelectorAll('.btn-outline-success, .btn-outline-danger').forEach(button => button.style.display = 'none');
-        }
-
-        function addCategory() {
-            const categoryName = document.getElementById('new-category-name').value.trim();
-            if (!categoryName) {
-                alert('Category name cannot be empty.');
-                return;
+        fetch(window.location.href, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-CSRFToken": "{{ csrf_token }}"
+            },
+            body: `new_category=${encodeURIComponent(categoryName)}`
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === "success") {
+                let categoryList = document.getElementById("categories-list");
+                let newCategoryItem = document.createElement("li");
+                newCategoryItem.className = "list-group-item d-flex justify-content-between align-items-center";
+                newCategoryItem.innerHTML = `
+                    <a href="/subjects/category/${data.category_id}/" class="text-decoration-none">${data.category_name}</a>
+                    <button class="btn btn-outline-danger btn-sm" onclick="deleteCategory(${data.category_id})">
+                        <i class="fas fa-trash-alt"></i>
+                    </button>
+                `;
+                categoryList.appendChild(newCategoryItem);
+                document.getElementById("new-category-name").value = "";
+            } else {
+                alert("Failed to add category.");
             }
-            const form = document.createElement('form');
-            form.method = 'POST';
-            form.innerHTML = `
-                {% csrf_token %}
-                <input type="hidden" name="new_category" value="\${categoryName}">
-            `;
-            document.body.appendChild(form);
-            form.submit();
-        }
-    </script>
+        });
+    }
+
+    function deleteCategory(categoryId) {
+        if (!confirm("Are you sure you want to delete this category?")) return;
+
+        fetch(window.location.href, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-CSRFToken": "{{ csrf_token }}"
+            },
+            body: `delete_category=1&category_id=${categoryId}`
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === "success") {
+                let categoryItem = document.querySelector(`button[onclick="deleteCategory(${categoryId})"]`).parentElement;
+                categoryItem.remove();
+            } else {
+                alert("Failed to delete category.");
+            }
+        });
+    }
+</script>
 {% endblock %}

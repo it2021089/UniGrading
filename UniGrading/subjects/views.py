@@ -1,9 +1,11 @@
 from django.shortcuts import render, get_object_or_404, redirect
+from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
+from django.views.decorators.csrf import csrf_exempt
+from django.views.generic import DetailView, ListView, CreateView
+from django.contrib.auth.mixins import LoginRequiredMixin
 from django.views.decorators.http import require_POST
 from django.urls import reverse_lazy
-from django.contrib.auth.mixins import LoginRequiredMixin
-from django.views.generic import DetailView, ListView, CreateView
 from .models import Subject, Category, File
 from .forms import SubjectForm
 from UniGrading.mixin import BreadcrumbMixin
@@ -13,7 +15,9 @@ import logging
 # Set up logging
 logger = logging.getLogger(__name__)
 
+# --------------------------
 # My Subjects View
+# --------------------------
 class MySubjectsView(LoginRequiredMixin, BreadcrumbMixin, ListView):
     model = Subject
     template_name = "my_subjects.html"
@@ -21,12 +25,11 @@ class MySubjectsView(LoginRequiredMixin, BreadcrumbMixin, ListView):
     paginate_by = 6
 
     def get_breadcrumbs(self):
+        dashboard_url = reverse_lazy("users:login")
         if self.request.user.role == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
         elif self.request.user.role == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
-        else:
-            dashboard_url = reverse_lazy("users:login")
 
         return [
             ("Dashboard", dashboard_url),
@@ -36,6 +39,9 @@ class MySubjectsView(LoginRequiredMixin, BreadcrumbMixin, ListView):
     def post(self, request, *args, **kwargs):
         return self.get(request, *args, **kwargs)
 
+# --------------------------
+# Create Subject View
+# --------------------------
 class CreateSubjectView(LoginRequiredMixin, CreateView):
     model = Subject
     form_class = SubjectForm
@@ -43,13 +49,12 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        dashboard_url = reverse_lazy("users:login")
         if self.request.user.role == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
         elif self.request.user.role == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
-        else:
-            dashboard_url = reverse_lazy("users:login")
-        
+
         context['breadcrumbs'] = [
             ("Dashboard", dashboard_url),
             ("My Subjects", reverse_lazy("subjects:my_subjects")),
@@ -81,18 +86,20 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
     def get_success_url(self):
         return reverse_lazy("subjects:my_subjects")
 
+# --------------------------
+# Subject Detail View
+# --------------------------
 class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     model = Subject
     template_name = "subject_detail.html"
     context_object_name = "subject"
 
     def get_breadcrumbs(self):
+        dashboard_url = reverse_lazy("users:login")
         if self.request.user.role == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
         elif self.request.user.role == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
-        else:
-            dashboard_url = reverse_lazy("users:login")
 
         return [
             ("Dashboard", dashboard_url),
@@ -102,41 +109,46 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        
-        # Fetch categories and log the results
-        categories = Category.objects.filter(subject=self.object).select_related('parent')
-        logger.debug("Fetched Categories: %s", categories)
-        
-        context["categories"] = categories
+        context["categories"] = self.object.categories.filter(parent__isnull=True)
         return context
 
     def post(self, request, *args, **kwargs):
         subject = self.get_object()
+        data = request.POST
 
-        if "new_category" in request.POST:
-            category_name = request.POST.get("new_category")
+        if "description" in data:
+            subject.description = data.get("description", "").strip()
+            subject.save()
+            return JsonResponse({"status": "success", "message": "Description updated!", "new_description": subject.description})
+
+        elif "new_category" in data:
+            category_name = data.get("new_category", "").strip()
             if category_name:
-                Category.objects.create(subject=subject, name=category_name)
-        elif "remove_category" in request.POST:
-            category_id = request.POST.get("category_id")
+                category = Category.objects.create(subject=subject, name=category_name, parent=None)
+                return JsonResponse({"status": "success", "message": "Category added!", "category_name": category.name, "category_id": category.id})
+
+        elif "delete_category" in data:
+            category_id = data.get("category_id")
             category = get_object_or_404(Category, id=category_id)
             category.delete()
+            return JsonResponse({"status": "success", "message": "Category deleted!"})
 
-        return redirect(self.request.path)
+        return JsonResponse({"status": "error", "message": "Invalid request."})
 
-# Category Detail View
+# --------------------------
+# Category Detail View (FIXED)
+# --------------------------
 class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     model = Category
     template_name = "category_detail.html"
     context_object_name = "category"
 
     def get_breadcrumbs(self):
+        dashboard_url = reverse_lazy("users:login")
         if self.request.user.role == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
         elif self.request.user.role == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
-        else:
-            dashboard_url = reverse_lazy("users:login")
 
         return [
             ("Dashboard", dashboard_url),
@@ -153,24 +165,25 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
 
     def post(self, request, *args, **kwargs):
         category = self.get_object()
+        data = request.POST
 
-        if "new_subcategory" in request.POST:
-            subcategory_name = request.POST.get("new_subcategory")
+        if "new_subcategory" in data:
+            subcategory_name = data.get("new_subcategory", "").strip()
             if subcategory_name:
-                Category.objects.create(subject=category.subject, name=subcategory_name, parent=category)
-        elif "new_file" in request.POST:
-            file = request.FILES.get("file")
-            if file:
-                # Ensure file is within size limits (e.g., 10MB)
-                if file.size > 10 * 1024 * 1024:
-                    logger.error("File size exceeded the limit")
-                    return redirect(self.request.path)
+                subcategory = Category.objects.create(subject=category.subject, name=subcategory_name, parent=category)
+                return JsonResponse({"status": "success", "message": "Subcategory added!", "subcategory_name": subcategory.name, "subcategory_id": subcategory.id})
 
-                # Ensure the file is saved using the correct storage backend
-                File.objects.create(category=category, name=file.name, file=file)
+        elif "delete_category" in data:
+            category_id = data.get("category_id")
+            category = get_object_or_404(Category, id=category_id)
+            category.delete()
+            return JsonResponse({"status": "success", "message": "Category deleted!"})
 
-        return redirect(self.request.path)
+        return JsonResponse({"status": "error", "message": "Invalid request."})
 
+# --------------------------
+# Delete Subject (Function-Based View)
+# --------------------------
 @login_required
 @require_POST
 def delete_subject(request, pk):
@@ -182,7 +195,9 @@ def delete_subject(request, pk):
     subject.delete()
     return redirect("subjects:my_subjects")
 
+# --------------------------
 # Delete File (Function-Based View)
+# --------------------------
 @login_required
 def delete_file(request, pk):
     file = get_object_or_404(File, pk=pk)
@@ -190,15 +205,15 @@ def delete_file(request, pk):
     file.delete()
     return redirect("subjects:category_detail", pk=category_pk)
 
+# --------------------------
 # Delete Subcategory (Function-Based View)
+# --------------------------
 @login_required
 def delete_subcategory(request, pk):
     subcategory = get_object_or_404(Category, pk=pk)
     parent_category_pk = subcategory.parent.pk if subcategory.parent else subcategory.subject.pk
 
-    # Prevent deletion if there are associated files or subcategories
     if subcategory.files.exists() or subcategory.subcategories.exists():
-        logger.error("Category has files or subcategories and cannot be deleted")
         return redirect("subjects:category_detail", pk=parent_category_pk)
 
     subcategory.delete()
