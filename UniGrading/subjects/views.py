@@ -202,9 +202,8 @@ def delete_subject(request, pk):
 def delete_file(request, pk):
     file = get_object_or_404(File, pk=pk)
     category_pk = file.category.pk
-    file.delete()
+    file.delete() 
     return redirect("subjects:category_detail", pk=category_pk)
-
 # --------------------------
 # Delete Subcategory (Function-Based View)
 # --------------------------

@@ -34,3 +34,10 @@ class File(models.Model):
 
     def __str__(self):
         return self.name
+    
+    def delete(self, *args, **kwargs):
+        """Delete file from MinIO before removing the database entry."""
+        storage = self.file.storage
+        if storage.exists(self.file.name):
+            storage.delete(self.file.name)  # Deletes from MinIO
+        super().delete(*args, **kwargs)  # Deletes from database
