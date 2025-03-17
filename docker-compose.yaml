@@ -24,8 +24,8 @@ services:
     environment:
       DJANGO_SETTINGS_MODULE: UniGrading.settings
       DATABASE_URL: /UniGrading/db.sqlite3  
-      AWS_ACCESS_KEY_ID: Dpa10KF1UZygmxyr36HW
-      AWS_SECRET_ACCESS_KEY: ecoN8snDkWsunb6D2R5GPe3sRYp3KflOVLgXZ2zd
+      AWS_ACCESS_KEY_ID: zAN5P7ekIrJdORdVtCPF # zAN5P7ekIrJdORdVtCPF <- Linux #Windows -> Dpa10KF1UZygmxyr36HW
+      AWS_SECRET_ACCESS_KEY: whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS # whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS  <- Linux #Windows -> ecoN8snDkWsunb6D2R5GPe3sRYp3KflOVLgXZ2zd
       AWS_STORAGE_BUCKET_NAME: files
       AWS_S3_ENDPOINT_URL: http://minio:9000
     ports:

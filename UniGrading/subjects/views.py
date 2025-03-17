@@ -10,6 +10,7 @@ from .models import Subject, Category, File
 from .forms import SubjectForm
 from UniGrading.mixin import BreadcrumbMixin
 from django.db import transaction, IntegrityError
+from django.contrib import messages 
 import logging
 
 # Set up logging
@@ -136,50 +137,62 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
         return JsonResponse({"status": "error", "message": "Invalid request."})
 
 # --------------------------
-# Category Detail View (FIXED)
+# Category Detail View
 # --------------------------
 class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     model = Category
     template_name = "category_detail.html"
     context_object_name = "category"
-
     def get_breadcrumbs(self):
+        category = self.get_object()
+
+        # Determine correct dashboard URL
         dashboard_url = reverse_lazy("users:login")
         if self.request.user.role == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
         elif self.request.user.role == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
 
-        return [
+        # Build breadcrumbs
+        breadcrumbs = [
             ("Dashboard", dashboard_url),
             ("My Subjects", reverse_lazy("subjects:my_subjects")),
-            (f"Subject: {self.object.subject.name}", reverse_lazy("subjects:subject_detail", args=[self.object.subject.pk])),
-            (f"Category: {self.object.name}", self.request.path),
+            (f"Subject: {category.subject.name}", reverse_lazy("subjects:subject_detail", args=[category.subject.pk])),
+            (f"Category: {category.name}", self.request.path),
         ]
+
+        return breadcrumbs
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
+        context["breadcrumbs"] = self.get_breadcrumbs()  # Ensure breadcrumbs are added to context
         context["subcategories"] = self.object.subcategories.all()
         context["files"] = self.object.files.all()
         return context
-
     def post(self, request, *args, **kwargs):
         category = self.get_object()
         data = request.POST
-
+        
         if "new_subcategory" in data:
             subcategory_name = data.get("new_subcategory", "").strip()
             if subcategory_name:
-                subcategory = Category.objects.create(subject=category.subject, name=subcategory_name, parent=category)
-                return JsonResponse({"status": "success", "message": "Subcategory added!", "subcategory_name": subcategory.name, "subcategory_id": subcategory.id})
+                Category.objects.create(subject=category.subject, name=subcategory_name, parent=category)
+                messages.success(request, "Subcategory added successfully!")  
 
-        elif "delete_category" in data:
-            category_id = data.get("category_id")
-            category = get_object_or_404(Category, id=category_id)
-            category.delete()
-            return JsonResponse({"status": "success", "message": "Category deleted!"})
+        elif "new_file" in request.POST:
+            if "file" not in request.FILES:
+                messages.error(request, "No file provided.")
+                return redirect(self.request.path)
 
-        return JsonResponse({"status": "error", "message": "Invalid request."})
+            uploaded_file = request.FILES["file"]
+
+            try:
+                File.objects.create(category=category, name=uploaded_file.name, file=uploaded_file)
+                messages.success(request, "File uploaded successfully!")  # Success message
+            except Exception as e:
+                messages.error(request, f"Upload failed: {str(e)}")  # Error message
+
+        return redirect(self.request.path) 
 
 # --------------------------
 # Delete Subject (Function-Based View)
