@@ -111,6 +111,7 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["categories"] = self.object.categories.filter(parent__isnull=True)
+        context["default_categories"] = ["Courses", "Assignments", "Tests", "Other"] 
         return context
 
     def post(self, request, *args, **kwargs):
@@ -128,6 +129,14 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
                 category = Category.objects.create(subject=subject, name=category_name, parent=None)
                 return JsonResponse({"status": "success", "message": "Category added!", "category_name": category.name, "category_id": category.id})
 
+        elif "rename_category" in data:
+            category_id = data.get("category_id")
+            category_name = data.get("category_name", "").strip()
+            category = get_object_or_404(Category, id=category_id)
+            category.name = category_name
+            category.save()
+            return JsonResponse({"status": "success", "message": "Category renamed!", "new_name": category.name})
+        
         elif "delete_category" in data:
             category_id = data.get("category_id")
             category = get_object_or_404(Category, id=category_id)

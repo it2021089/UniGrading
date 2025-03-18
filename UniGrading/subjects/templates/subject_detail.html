@@ -42,23 +42,43 @@
                         </div>
                     </div>
 
-                    <!-- Categories -->
-                    <h5>Categories</h5>
-                    <ul class="list-group mb-3" id="categories-list">
-                        {% for category in categories %}
-                            <li class="list-group-item d-flex justify-content-between align-items-center">
+                <!-- Categories -->
+                <h5>Categories</h5>
+                <ul class="list-group mb-3" id="categories-list">
+                    {% for category in categories %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            {% if category.name == "Assignments" %}
+                                <a href="{% url 'assignments:assignment_list' subject.pk %}" class="text-decoration-none">
+                                    {{ category.name }}
+                                </a>
+                            {% else %}
+                                <!-- Normal categories go to category detail -->
                                 <a href="{% url 'subjects:category_detail' category.pk %}" class="text-decoration-none">
                                     {{ category.name }}
                                 </a>
-                                <button class="btn btn-outline-danger btn-sm" onclick="deleteCategory({{ category.id }})">
-                                    <i class="fas fa-trash-alt"></i>
-                                </button>
-                            </li>
-                        {% empty %}
-                            <li class="list-group-item text-muted">No categories available.</li>
-                        {% endfor %}
-                    </ul>
+                            {% endif %}
 
+                            <!-- Show Rename & Delete buttons only for non-default categories -->
+                            {% if category.name not in default_categories %}
+                                <div>
+                                    <button class="btn btn-outline-secondary btn-sm"
+                                            onclick="editCategory({{ category.id }})">
+                                        <i class="fas fa-pencil-alt"></i>
+                                    </button>
+                                    <button class="btn btn-outline-success btn-sm" id="save-category-{{ category.id }}" style="display: none;"
+                                            onclick="saveCategory({{ category.id }})">
+                                        <i class="fas fa-check"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger btn-sm" onclick="deleteCategory({{ category.id }})">
+                                        <i class="fas fa-trash-alt"></i>
+                                    </button>
+                                </div>
+                            {% endif %}
+                        </li>
+                    {% empty %}
+                        <li class="list-group-item text-muted">No categories available.</li>
+                    {% endfor %}
+                </ul>
                     <!-- Add New Category -->
                     <div class="input-group mb-3">
                         <input type="text" id="new-category-name" class="form-control" placeholder="New Category Name">
@@ -75,23 +95,17 @@
 <script>
     function editDescription() {
         let descriptionField = document.getElementById("subject-description");
-        let saveButton = document.getElementById("save-description");
-        let cancelButton = document.getElementById("cancel-description");
-
         descriptionField.removeAttribute("readonly");
         descriptionField.focus();
-        saveButton.style.display = "inline-block";
-        cancelButton.style.display = "inline-block";
+        document.getElementById("save-description").style.display = "inline-block";
+        document.getElementById("cancel-description").style.display = "inline-block";
     }
 
     function cancelEdit() {
         let descriptionField = document.getElementById("subject-description");
-        let saveButton = document.getElementById("save-description");
-        let cancelButton = document.getElementById("cancel-description");
-
         descriptionField.setAttribute("readonly", true);
-        saveButton.style.display = "none";
-        cancelButton.style.display = "none";
+        document.getElementById("save-description").style.display = "none";
+        document.getElementById("cancel-description").style.display = "none";
     }
 
     function saveDescription() {
@@ -114,13 +128,56 @@
         .then(response => response.json())
         .then(data => {
             if (data.status === "success") {
-                descriptionField.setAttribute("readonly", true);
-                document.getElementById("save-description").style.display = "none";
-                document.getElementById("cancel-description").style.display = "none";
+                cancelEdit();
             } else {
                 alert("Failed to update description.");
             }
         });
+    }
+
+    function editCategory(categoryId) {
+        let nameField = document.getElementById(`category-name-${categoryId}`);
+        nameField.removeAttribute("readonly");
+        nameField.focus();
+        document.getElementById(`save-category-${categoryId}`).style.display = "inline-block";
+        document.getElementById(`cancel-category-${categoryId}`).style.display = "inline-block";
+    }
+
+    function saveCategory(categoryId) {
+        let nameField = document.getElementById(`category-name-${categoryId}`);
+        let newName = nameField.value.trim();
+
+        if (!newName) {
+            alert("Category name cannot be empty.");
+            return;
+        }
+
+        fetch(window.location.href, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-CSRFToken": "{{ csrf_token }}"
+            },
+            body: `rename_category=1&category_id=${categoryId}&category_name=${encodeURIComponent(newName)}`
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.status === "success") {
+                nameField.setAttribute("readonly", true);
+                document.getElementById(`save-category-${categoryId}`).style.display = "none";
+                document.getElementById(`cancel-category-${categoryId}`).style.display = "none";
+            } else {
+                alert("Failed to rename category.");
+            }
+        });
+    }
+
+    function cancelCategoryEdit(categoryId, originalName) {
+        let nameField = document.getElementById(`category-name-${categoryId}`);
+        nameField.value = originalName;
+        nameField.setAttribute("readonly", true);
+        document.getElementById(`save-category-${categoryId}`).style.display = "none";
+        document.getElementById(`cancel-category-${categoryId}`).style.display = "none";
     }
 
     function addCategory() {
@@ -141,41 +198,9 @@
         .then(response => response.json())
         .then(data => {
             if (data.status === "success") {
-                let categoryList = document.getElementById("categories-list");
-                let newCategoryItem = document.createElement("li");
-                newCategoryItem.className = "list-group-item d-flex justify-content-between align-items-center";
-                newCategoryItem.innerHTML = `
-                    <a href="/subjects/category/${data.category_id}/" class="text-decoration-none">${data.category_name}</a>
-                    <button class="btn btn-outline-danger btn-sm" onclick="deleteCategory(${data.category_id})">
-                        <i class="fas fa-trash-alt"></i>
-                    </button>
-                `;
-                categoryList.appendChild(newCategoryItem);
-                document.getElementById("new-category-name").value = "";
+                location.reload(); // Reload to show new category
             } else {
                 alert("Failed to add category.");
-            }
-        });
-    }
-
-    function deleteCategory(categoryId) {
-        if (!confirm("Are you sure you want to delete this category?")) return;
-
-        fetch(window.location.href, {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "X-CSRFToken": "{{ csrf_token }}"
-            },
-            body: `delete_category=1&category_id=${categoryId}`
-        })
-        .then(response => response.json())
-        .then(data => {
-            if (data.status === "success") {
-                let categoryItem = document.querySelector(`button[onclick="deleteCategory(${categoryId})"]`).parentElement;
-                categoryItem.remove();
-            } else {
-                alert("Failed to delete category.");
             }
         });
     }
