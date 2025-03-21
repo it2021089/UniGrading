@@ -2,7 +2,7 @@
 {% load static %}
 {% load view_breadcrumbs %}
 
-{% block title %}Create Assignment{% endblock %}
+{% block title %}{{ view.object.pk|yesno:"Edit Assignment,Create Assignment" }}{% endblock %}
 
 {% block content %}
 <div class="container mt-5">
@@ -21,31 +21,68 @@
         <div class="col-md-8">
             <div class="card shadow-sm">
                 <div class="card-header bg-primary text-white">
-                    <h4 class="mb-0">Create Assignment</h4>
+                    <h4>{{ view.object.pk|yesno:"Edit Assignment,Create Assignment" }}</h4>
                 </div>
                 <div class="card-body">
                     <form method="POST" enctype="multipart/form-data">
                         {% csrf_token %}
+                        
+                        <!-- Title -->
                         <div class="mb-3">
                             <label for="{{ form.title.id_for_label }}" class="form-label">Title</label>
                             {{ form.title }}
                         </div>
+
+                        <!-- Description -->
                         <div class="mb-3">
                             <label for="{{ form.description.id_for_label }}" class="form-label">Description</label>
                             {{ form.description }}
                         </div>
+
+                        <!-- Due Date -->
                         <div class="mb-3">
                             <label for="{{ form.due_date.id_for_label }}" class="form-label">Due Date</label>
                             {{ form.due_date }}
                         </div>
+
+                        <!-- File Upload Section -->
                         <div class="mb-3">
-                            <label for="{{ form.file.id_for_label }}" class="form-label">Upload File</label>
+                            <label class="form-label">Attached File</label>
+                            <div id="file-preview-section">
+                                {% if form.instance.file %}
+                                    <div class="file-preview d-flex align-items-center">
+                                        <a href="{{ form.instance.file.url }}" target="_blank" class="btn btn-outline-primary btn-sm">
+                                            <i class="fas fa-file"></i> View Current File
+                                        </a>
+                                        <button type="button" class="btn btn-danger btn-sm ms-2" onclick="removeFile()">
+                                            <i class="fas fa-times"></i> Remove
+                                        </button>
+                                    </div>
+                                {% else %}
+                                    <p class="text-muted">No file uploaded.</p>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <!-- New File Upload -->
+                        <div class="mb-3">
+                            <label for="{{ form.file.id_for_label }}" class="form-label">Upload New File</label>
+                            <small class="text-muted d-block mb-2">Uploading a new file will replace the existing one.</small>
                             {{ form.file }}
                         </div>
 
                         <div class="d-flex justify-content-between">
-                            <a href="{% url 'assignments:assignment_list' subject.pk %}" class="btn btn-secondary">Cancel</a>
-                            <button type="submit" class="btn btn-success">Create Assignment</button>
+                            {% if object.pk %}
+                                <a href="{% url 'assignments:assignment_detail' object.pk %}" class="btn btn-secondary">
+                                    Cancel
+                                </a>
+                                <button type="submit" class="btn btn-primary">Save Changes</button>
+                            {% else %}
+                                <a href="{% url 'assignments:assignment_list' subject.pk %}" class="btn btn-secondary">
+                                    Cancel
+                                </a>
+                                <button type="submit" class="btn btn-primary">Create Assignment</button>
+                            {% endif %}
                         </div>
                     </form>
                 </div>
@@ -53,5 +90,19 @@
         </div>
     </div>
 </div>
+
+<script>
+    function removeFile() {
+        // Hide the file preview section
+        document.getElementById("file-preview-section").innerHTML = "<p class='text-muted'>No file uploaded.</p>";
+
+        // Add a hidden input to mark file for deletion
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "clear_file";
+        input.value = "1";
+        document.querySelector("form").appendChild(input);
+    }
+</script>
 
 {% endblock %}
