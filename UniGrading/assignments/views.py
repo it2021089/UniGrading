@@ -99,7 +99,7 @@ class AssignmentUpdateView(LoginRequiredMixin, BreadcrumbMixin, UpdateView):
 
     def get_object(self):
         return get_object_or_404(Assignment, pk=self.kwargs['assignment_id'])
-
+    
     def get_success_url(self):
         return reverse_lazy('assignments:assignment_detail', kwargs={'pk': self.object.pk})
 

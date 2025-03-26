@@ -196,10 +196,15 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             uploaded_file = request.FILES["file"]
 
             try:
-                File.objects.create(category=category, name=uploaded_file.name, file=uploaded_file)
-                messages.success(request, "File uploaded successfully!")  # Success message
+                File.objects.create(
+                    category=category,
+                    name=uploaded_file.name,
+                    file=uploaded_file,
+                    uploaded_by=request.user  
+                )
+                messages.success(request, "File uploaded successfully!")
             except Exception as e:
-                messages.error(request, f"Upload failed: {str(e)}")  # Error message
+                messages.error(request, f"Upload failed: {str(e)}")
 
         return redirect(self.request.path) 
 
