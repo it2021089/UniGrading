@@ -1,13 +1,13 @@
 {% extends 'base.html' %}
 {% load static %}
 {% load view_breadcrumbs %}
+{% load humanize %}
 
 {% block title %}Category Detail{% endblock %}
 
 {% block content %}
-
-<!-- Breadcrumb Navigation -->
 <div class="container mt-5">
+    <!-- Breadcrumbs -->
     <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
             {% for name, url in breadcrumbs %}
@@ -17,43 +17,42 @@
             {% endfor %}
         </ol>
     </nav>
+
     {% if messages %}
-    <div class="container mt-3">
-        {% for message in messages %}
-            <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
-                {{ message }}
-                <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-        {% endfor %}
-    </div>
-{% endif %}
-    <!-- Category Content -->
+        <div class="container mt-3">
+            {% for message in messages %}
+                <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="close" data-dismiss="alert">
+                        <span>&times;</span>
+                    </button>
+                </div>
+            {% endfor %}
+        </div>
+    {% endif %}
+
+    <!-- Category Section -->
     <div class="row justify-content-center">
-        <div class="col-md-8">
+        <div class="col-md-10">
             <div class="card shadow-sm no-hover-card">
-                <!-- Header -->
-                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                <div class="card-header bg-primary text-white">
                     <h4 class="mb-0">{{ category.name }}</h4>
                 </div>
-
-                <!-- Files and Folders -->
                 <div class="card-body">
                     <h5>Files and Folders</h5>
-                    <ul class="list-group mb-3" id="file-folder-list">
+                    <ul class="list-group mb-3">
                         <!-- Subcategories -->
                         {% for subcategory in category.subcategories.all %}
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <a href="{% url 'subjects:category_detail' subcategory.pk %}" class="text-decoration-none">
-                                    {{ subcategory.name }}
+                                <a href="{% url 'subjects:category_detail' subcategory.pk %}">
+                                    <i class="fas fa-folder mr-2 text-warning"></i> {{ subcategory.name }}
                                 </a>
-                                <button class="btn btn-outline-danger btn-sm" 
-                                        data-toggle="modal" 
-                                        data-target="#deleteModal"
-                                        data-item-id="{{ subcategory.pk }}"
-                                        data-item-name="{{ subcategory.name }}"
-                                        data-delete-url="{% url 'subjects:delete_subcategory' subcategory.pk %}">
+                                <button class="btn btn-outline-danger btn-sm"
+                                    data-toggle="modal"
+                                    data-target="#deleteModal"
+                                    data-item-id="{{ subcategory.pk }}"
+                                    data-item-name="{{ subcategory.name }}"
+                                    data-delete-url="{% url 'subjects:delete_subcategory' subcategory.pk %}">
                                     <i class="fas fa-trash-alt"></i>
                                 </button>
                             </li>
@@ -62,19 +61,38 @@
                         {% endfor %}
 
                         <!-- Files -->
-                        {% for file in category.files.all %}
-                            <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <a href="{{ file.file.url }}" class="text-decoration-none" download>
-                                    {{ file.name }}
-                                </a>
-                                <button class="btn btn-outline-danger btn-sm"
-                                        data-toggle="modal"
-                                        data-target="#deleteModal"
-                                        data-item-id="{{ file.pk }}"
-                                        data-item-name="{{ file.name }}"
-                                        data-delete-url="{% url 'subjects:delete_file' file.pk %}">
-                                    <i class="fas fa-trash-alt"></i>
-                                </button>
+                        {% for file in files %}
+                            <li class="list-group-item">
+                                <div class="d-flex align-items-center justify-content-between">
+                                    <div class="d-flex align-items-center">
+                                        <i class="fas fa-file-alt fa-2x mr-3 text-secondary"></i>
+                                        <div>
+                                            <strong>{{ file.name }}</strong><br>
+                                            <small class="text-muted">
+                                                Size: {{ file.file.size|filesizeformat }} |
+                                                Uploaded: {{ file.uploaded_at|naturaltime }}
+                                            </small>
+                                        </div>
+                                    </div>
+
+                                    <div class="btn-group">
+                                        <button class="btn btn-sm btn-outline-info" onclick="showPreview('{% url 'subjects:preview_file' file.pk %}', '{{ file.name }}')"
+                                        >
+                                            <i class="fas fa-eye"></i> Preview
+                                        </button>
+                                        <a href="{% url 'subjects:download_file' file.pk %}" class="btn btn-sm btn-outline-success">
+                                            <i class="fas fa-download"></i> Download
+                                        </a>
+                                        <button class="btn btn-sm btn-outline-danger"
+                                            data-toggle="modal"
+                                            data-target="#deleteModal"
+                                            data-item-id="{{ file.pk }}"
+                                            data-item-name="{{ file.name }}"
+                                            data-delete-url="{% url 'subjects:delete_file' file.pk %}">
+                                            <i class="fas fa-trash-alt"></i>
+                                        </button>
+                                    </div>
+                                </div>
                             </li>
                         {% empty %}
                             <li class="list-group-item text-muted">No files available.</li>
@@ -85,7 +103,7 @@
                     <div class="input-group mb-3">
                         <input type="text" id="new-folder-name" class="form-control" placeholder="New Folder Name">
                         <div class="input-group-append">
-                            <button class="btn btn-outline-primary" type="button" onclick="addFolder()">
+                            <button class="btn btn-outline-primary" onclick="addFolder()">
                                 <i class="fas fa-plus"></i> Add Folder
                             </button>
                         </div>
@@ -106,84 +124,122 @@
     </div>
 </div>
 
-<!-- Delete Modal -->
-<div class="modal fade" id="deleteModal" tabindex="-1" role="dialog" aria-labelledby="deleteModalLabel" aria-hidden="true">
-    <div class="modal-dialog" role="document">
+<!-- Preview Modal -->
+<div class="modal fade" id="previewModal" tabindex="-1" role="dialog" aria-labelledby="previewModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title" id="deleteModalLabel">Delete Item</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
+                <h5 class="modal-title" id="previewModalLabel">Preview</h5>
+                <button type="button" class="close" data-dismiss="modal">
+                    <span>&times;</span>
                 </button>
             </div>
-            <div class="modal-body">
-                Are you sure you want to delete <strong id="itemName"></strong>?
+            <div class="modal-body text-center">
+                <img id="previewImage" src="" class="img-fluid rounded" style="max-height: 500px; display: none;">
+                <iframe id="previewIframe" style="width: 100%; height: 500px; display: none;" frameborder="0"></iframe>
             </div>
             <div class="modal-footer">
-                <form method="post" action="" id="deleteForm">
-                    {% csrf_token %}
-                    <button type="submit" class="btn btn-danger">Yes, Delete</button>
-                </form>
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                <a id="downloadLink" class="btn btn-success" download target="_blank">
+                    <i class="fas fa-download"></i> Download
+                </a>
+                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
 </div>
 
-<script src="https://code.jquery.com/jquery-3.5.1.min.js"></script>
-<script src="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/js/bootstrap.min.js"></script>
+<!-- Delete Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1" role="dialog">
+    <div class="modal-dialog" role="document">
+        <form method="post" id="deleteForm">
+            {% csrf_token %}
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Delete Item</h5>
+                    <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+                </div>
+                <div class="modal-body">
+                    Are you sure you want to delete <strong id="itemName"></strong>?
+                </div>
+                <div class="modal-footer">
+                    <button type="submit" class="btn btn-danger">Yes, Delete</button>
+                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
 <script>
+    function showPreview(url, filename) {
+        const previewImage = document.getElementById('previewImage');
+        const previewIframe = document.getElementById('previewIframe');
+        const previewTitle = document.getElementById('previewModalLabel');
+        const downloadLink = document.getElementById('downloadLink');
+    
+        // Reset
+        previewImage.style.display = 'none';
+        previewIframe.style.display = 'none';
+    
+        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+            .then(response => {
+                const contentType = response.headers.get("Content-Type");
+                downloadLink.href = url;
+                downloadLink.setAttribute("download", filename);
+    
+                previewTitle.innerText = "Preview: " + filename;
+    
+                if (contentType.startsWith("image/")) {
+                    previewImage.src = url;
+                    previewImage.style.display = "block";
+                } else if (contentType === "application/pdf") {
+                    previewIframe.src = url;
+                    previewIframe.style.display = "block";
+                } else {
+                    alert("This file type cannot be previewed.");
+                    return;
+                }
+    
+                $('#previewModal').modal('show');
+            })
+            .catch(err => {
+                alert("Preview failed.");
+                console.error(err);
+            });
+    }
     function addFolder() {
         const name = document.getElementById('new-folder-name').value.trim();
-        if (name === '') {
-            alert('Folder name cannot be empty.');
-            return;
-        }
+        if (!name) return alert("Folder name cannot be empty.");
         const form = document.createElement('form');
         form.method = 'POST';
-        form.innerHTML = `
-            {% csrf_token %}
-            <input type="hidden" name="new_subcategory" value="${name}">
-        `;
+        form.innerHTML = `{% csrf_token %}<input type="hidden" name="new_subcategory" value="${name}">`;
         document.body.appendChild(form);
         form.submit();
     }
 
     function addFile() {
         const fileInput = document.getElementById('file-input');
-        if (fileInput.files.length === 0) {
-            alert('Please select a file to upload.');
-            return;
-        }
+        if (fileInput.files.length === 0) return alert("Please select a file to upload.");
         const form = document.createElement('form');
         form.method = 'POST';
-        form.enctype = 'multipart/form-data';  // Ensure we handle file uploads correctly
-        form.innerHTML = `
-            {% csrf_token %}
-            <input type="hidden" name="new_file" value="true">
-        `;
-
-        // Add the file input to the form
-        const fileField = document.createElement('input');
-        fileField.type = 'file';
-        fileField.name = 'file';
-        fileField.files = fileInput.files;
-        form.appendChild(fileField);
-
-        // Submit the form
+        form.enctype = 'multipart/form-data';
+        form.innerHTML = `{% csrf_token %}<input type="hidden" name="new_file" value="true">`;
+        const input = document.createElement('input');
+        input.type = 'file';
+        input.name = 'file';
+        input.files = fileInput.files;
+        form.appendChild(input);
         document.body.appendChild(form);
         form.submit();
     }
 
     $('#deleteModal').on('show.bs.modal', function (event) {
         const button = $(event.relatedTarget);
-        const itemId = button.data('item-id');
-        const itemName = button.data('item-name');
         const deleteUrl = button.data('delete-url');
+        const itemName = button.data('item-name');
 
-        const modal = $(this);
-        modal.find('#itemName').text(itemName);
-        modal.find('#deleteForm').attr('action', deleteUrl);
+        $('#itemName').text(itemName);
+        $('#deleteForm').attr('action', deleteUrl);  
     });
 </script>
 {% endblock %}

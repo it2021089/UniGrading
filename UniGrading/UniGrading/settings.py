@@ -47,6 +47,8 @@ INSTALLED_APPS = [
     'UniGrading',
     'storages',
     'tests',
+    'django.contrib.humanize',
+
 ]
 JAZZMIN_SETTINGS = {
     "site_title": "UniGrading Admin",
@@ -129,8 +131,8 @@ DATABASES = {
 AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID', 'zAN5P7ekIrJdORdVtCPF') # zAN5P7ekIrJdORdVtCPF <- Linux #Windows -> Dpa10KF1UZygmxyr36HW
 AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY', 'whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS') # whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS <- Linux #Windows -> ecoN8snDkWsunb6D2R5GPe3sRYp3KflOVLgXZ2zd
 AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME', 'files')
-AWS_S3_ENDPOINT_URL = os.getenv('AWS_S3_ENDPOINT_URL', 'http://minio:9000/')
-AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN", "127.0.0.1:9000")
+AWS_S3_ENDPOINT_URL = os.getenv("AWS_S3_ENDPOINT_URL", "http://minio:9000")
+#AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN", "127.0.0.1:9000")
 AWS_S3_REGION_NAME = 'us-east-1'
 AWS_S3_SIGNATURE_VERSION = 's3v4'
 
@@ -170,3 +172,24 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
+
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',  
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': True,
+        },
+    },
+}

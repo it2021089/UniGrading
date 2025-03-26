@@ -53,12 +53,13 @@ class File(models.Model):
     name = models.CharField(max_length=100)
     file = models.FileField(upload_to=subject_file_upload_path, storage=get_file_storage())
     uploaded_by = models.ForeignKey(CustomUser, null=True, blank=True, on_delete=models.SET_NULL)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.name
 
     def delete(self, *args, **kwargs):
         storage = self.file.storage
-        if storage.exists(self.file.name):
+        if self.file and storage.exists(self.file.name):
             storage.delete(self.file.name)
         super().delete(*args, **kwargs)

@@ -1,4 +1,6 @@
 from django.urls import path
+from . import views
+
 from .views import (
     MySubjectsView, CreateSubjectView, SubjectDetailView,
     CategoryDetailView, delete_file, delete_subcategory, delete_subject
@@ -14,4 +16,7 @@ urlpatterns = [
     path("category/<int:pk>/", CategoryDetailView.as_view(), name="category_detail"),
     path("file/<int:pk>/delete/", delete_file, name="delete_file"),
     path("subcategory/<int:pk>/delete/", delete_subcategory, name="delete_subcategory"),
+    path("file/<int:file_id>/download/", views.download_file, name="download_file"),
+    path("file/<int:pk>/preview/", views.preview_file, name="preview_file"),
+
 ]

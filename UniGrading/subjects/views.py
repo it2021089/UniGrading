@@ -1,5 +1,5 @@
 from django.shortcuts import render, get_object_or_404, redirect
-from django.http import JsonResponse
+from django.http import Http404, JsonResponse, HttpResponseRedirect, FileResponse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import DetailView, ListView, CreateView
@@ -11,7 +11,11 @@ from .forms import SubjectForm
 from UniGrading.mixin import BreadcrumbMixin
 from django.db import transaction, IntegrityError
 from django.contrib import messages 
+import mimetypes
 import logging
+from django.conf import settings
+import boto3
+from botocore.exceptions import ClientError
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -96,11 +100,12 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     context_object_name = "subject"
 
     def get_breadcrumbs(self):
-        dashboard_url = reverse_lazy("users:login")
         if self.request.user.role == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
         elif self.request.user.role == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
+        else:
+            dashboard_url = reverse_lazy("users:login")
 
         return [
             ("Dashboard", dashboard_url),
@@ -111,7 +116,6 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["categories"] = self.object.categories.filter(parent__isnull=True)
-        context["default_categories"] = ["Courses", "Assignments", "Tests", "Other"] 
         return context
 
     def post(self, request, *args, **kwargs):
@@ -119,74 +123,75 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
         data = request.POST
 
         if "description" in data:
-            subject.description = data.get("description", "").strip()
-            subject.save()
-            return JsonResponse({"status": "success", "message": "Description updated!", "new_description": subject.description})
+            new_description = data.get("description", "").strip()
+            if new_description:
+                subject.description = new_description
+                subject.save()
+                return JsonResponse({"status": "success", "message": "Description updated!"})
 
         elif "new_category" in data:
             category_name = data.get("new_category", "").strip()
             if category_name:
                 category = Category.objects.create(subject=subject, name=category_name, parent=None)
-                return JsonResponse({"status": "success", "message": "Category added!", "category_name": category.name, "category_id": category.id})
+                return JsonResponse({"status": "success", "message": "Category added!", "category_id": category.id, "category_name": category.name})
 
-        elif "rename_category" in data:
-            category_id = data.get("category_id")
-            category_name = data.get("category_name", "").strip()
-            category = get_object_or_404(Category, id=category_id)
-            category.name = category_name
-            category.save()
-            return JsonResponse({"status": "success", "message": "Category renamed!", "new_name": category.name})
-        
         elif "delete_category" in data:
             category_id = data.get("category_id")
             category = get_object_or_404(Category, id=category_id)
             category.delete()
             return JsonResponse({"status": "success", "message": "Category deleted!"})
 
-        return JsonResponse({"status": "error", "message": "Invalid request."})
+        return redirect(self.request.path)
 
-# --------------------------
 # Category Detail View
-# --------------------------
 class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     model = Category
     template_name = "category_detail.html"
     context_object_name = "category"
+
     def get_breadcrumbs(self):
         category = self.get_object()
-
-        # Determine correct dashboard URL
         dashboard_url = reverse_lazy("users:login")
         if self.request.user.role == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
         elif self.request.user.role == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
 
-        # Build breadcrumbs
-        breadcrumbs = [
+        return [
             ("Dashboard", dashboard_url),
             ("My Subjects", reverse_lazy("subjects:my_subjects")),
             (f"Subject: {category.subject.name}", reverse_lazy("subjects:subject_detail", args=[category.subject.pk])),
             (f"Category: {category.name}", self.request.path),
         ]
 
-        return breadcrumbs
-
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["breadcrumbs"] = self.get_breadcrumbs()  # Ensure breadcrumbs are added to context
-        context["subcategories"] = self.object.subcategories.all()
-        context["files"] = self.object.files.all()
+        category = self.object
+        files = category.files.all()
+
+        # Enhance file metadata
+        for file in files:
+            file.extension = file.name.split('.')[-1].lower()
+            file.mimetype, _ = mimetypes.guess_type(file.file.url)
+            try:
+                file.size_kb = round(file.file.size / 1024, 2)
+            except Exception:
+                file.size_kb = "-"
+
+        context["breadcrumbs"] = self.get_breadcrumbs()
+        context["subcategories"] = category.subcategories.all()
+        context["files"] = files
         return context
+
     def post(self, request, *args, **kwargs):
         category = self.get_object()
         data = request.POST
-        
+
         if "new_subcategory" in data:
             subcategory_name = data.get("new_subcategory", "").strip()
             if subcategory_name:
                 Category.objects.create(subject=category.subject, name=subcategory_name, parent=category)
-                messages.success(request, "Subcategory added successfully!")  
+                messages.success(request, "Subcategory added successfully!")
 
         elif "new_file" in request.POST:
             if "file" not in request.FILES:
@@ -194,19 +199,13 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
                 return redirect(self.request.path)
 
             uploaded_file = request.FILES["file"]
-
             try:
-                File.objects.create(
-                    category=category,
-                    name=uploaded_file.name,
-                    file=uploaded_file,
-                    uploaded_by=request.user  
-                )
+                File.objects.create(category=category, name=uploaded_file.name, file=uploaded_file, uploaded_by=request.user)
                 messages.success(request, "File uploaded successfully!")
             except Exception as e:
                 messages.error(request, f"Upload failed: {str(e)}")
 
-        return redirect(self.request.path) 
+        return redirect(self.request.path)
 
 # --------------------------
 # Delete Subject (Function-Based View)
@@ -228,8 +227,12 @@ def delete_subject(request, pk):
 @login_required
 def delete_file(request, pk):
     file = get_object_or_404(File, pk=pk)
-    category_pk = file.category.pk
-    file.delete() 
+    logger.info(f"[DELETE FILE] Request to delete file {file.name} ({file.file.name})")
+
+    category_pk = file.category.pk  
+    file.delete()
+
+    logger.info("[DELETE FILE] File deleted successfully.")
     return redirect("subjects:category_detail", pk=category_pk)
 # --------------------------
 # Delete Subcategory (Function-Based View)
@@ -244,3 +247,48 @@ def delete_subcategory(request, pk):
 
     subcategory.delete()
     return redirect("subjects:category_detail", pk=parent_category_pk)
+
+# --------------------------
+# Download file (Function-Based View)
+# --------------------------
+
+def download_file(request, file_id):
+    file = get_object_or_404(File, id=file_id)
+
+    s3_client = boto3.client(
+        's3',
+        endpoint_url=settings.AWS_S3_ENDPOINT_URL,
+        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
+        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+    )
+
+    try:
+        # Generate presigned URL
+        presigned_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': settings.AWS_STORAGE_BUCKET_NAME, 'Key': file.file.name},
+            ExpiresIn=3600,
+        )
+
+        # Replace "minio" with "localhost" for browser use
+        browser_url = presigned_url.replace("http://minio:9000", "http://localhost:9000")
+
+        return HttpResponseRedirect(browser_url)
+
+    except Exception as e:
+        raise Http404("Could not generate download link.")
+    
+# --------------------------
+# Preview file (Function-Based View)
+# --------------------------
+
+@login_required
+def preview_file(request, pk):
+    file = get_object_or_404(File, pk=pk)
+
+    try:
+        # Open file using Django storage backend
+        file_handle = file.file.open("rb")
+        return FileResponse(file_handle, content_type=file.file.file.content_type)
+    except Exception:
+        raise Http404("File could not be previewed.")
