@@ -238,8 +238,11 @@
         const deleteUrl = button.data('delete-url');
         const itemName = button.data('item-name');
 
+        console.log("Delete URL: ", deleteUrl); // Check if URL is correct
+        console.log("Item Name: ", itemName); // Verify item name is correct
+
         $('#itemName').text(itemName);
-        $('#deleteForm').attr('action', deleteUrl);  
+        $('#deleteForm').attr('action', deleteUrl);
     });
 </script>
 {% endblock %}

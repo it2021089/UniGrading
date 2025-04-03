@@ -48,6 +48,8 @@ INSTALLED_APPS = [
     'storages',
     'tests',
     'django.contrib.humanize',
+    "widget_tweaks",
+
 
 ]
 JAZZMIN_SETTINGS = {

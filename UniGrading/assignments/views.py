@@ -9,6 +9,7 @@ from .forms import AssignmentForm
 from django.views.generic import DetailView
 from UniGrading.mixin import BreadcrumbMixin  
 from django.views.generic import UpdateView
+from django.views.decorators.http import require_POST
 
 
 class AssignmentListView(LoginRequiredMixin, BreadcrumbMixin, ListView):
@@ -82,23 +83,21 @@ class AssignmentDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     
 
 @login_required
-def delete_assignment(request, assignment_id):
-    assignment = get_object_or_404(Assignment, pk=assignment_id)
-
+@require_POST
+def delete_assignment(request, pk):
+    assignment = get_object_or_404(Assignment, pk=pk)
     if request.user != assignment.professor:
-        return redirect("assignments:assignment_list", subject_id=assignment.subject.pk)
-
-    if request.method == "POST":
-        subject_id = assignment.subject.pk
-        assignment.delete()
-        return redirect("assignments:assignment_list", subject_id=subject_id)   
+        return redirect('assignments:assignment_list', subject_id=assignment.subject.pk)
+    
+    assignment.delete()
+    return redirect('assignments:assignment_list', subject_id=assignment.subject.pk)
 class AssignmentUpdateView(LoginRequiredMixin, BreadcrumbMixin, UpdateView):
     model = Assignment
     form_class = AssignmentForm
     template_name = "assignment_form.html"
 
     def get_object(self):
-        return get_object_or_404(Assignment, pk=self.kwargs['assignment_id'])
+        return get_object_or_404(Assignment, pk=self.kwargs['pk'])
     
     def get_success_url(self):
         return reverse_lazy('assignments:assignment_detail', kwargs={'pk': self.object.pk})

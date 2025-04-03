@@ -227,13 +227,21 @@ def delete_subject(request, pk):
 @login_required
 def delete_file(request, pk):
     file = get_object_or_404(File, pk=pk)
-    logger.info(f"[DELETE FILE] Request to delete file {file.name} ({file.file.name})")
+    logger.info(f"Attempting to delete file {file.name} by user {request.user.username}")
 
-    category_pk = file.category.pk  
-    file.delete()
+    if request.user != file.uploaded_by and not request.user.is_superuser:
+        logger.warning("Permission denied for deleting file.")
+        messages.error(request, "You do not have permission to delete this file.")
+        return redirect('subjects:category_detail', pk=file.category.pk)
 
-    logger.info("[DELETE FILE] File deleted successfully.")
-    return redirect("subjects:category_detail", pk=category_pk)
+    try:
+        file.delete()
+        messages.success(request, "File deleted successfully.")
+        logger.info("File deleted successfully.")
+    except Exception as e:
+        logger.error(f"Error deleting file: {e}")
+        messages.error(request, "An error occurred while deleting the file.")
+    return redirect('subjects:category_detail', pk=file.category.pk)
 # --------------------------
 # Delete Subcategory (Function-Based View)
 # --------------------------
@@ -254,29 +262,10 @@ def delete_subcategory(request, pk):
 
 def download_file(request, file_id):
     file = get_object_or_404(File, id=file_id)
-
-    s3_client = boto3.client(
-        's3',
-        endpoint_url=settings.AWS_S3_ENDPOINT_URL,
-        aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-        aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-    )
-
-    try:
-        # Generate presigned URL
-        presigned_url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': settings.AWS_STORAGE_BUCKET_NAME, 'Key': file.file.name},
-            ExpiresIn=3600,
-        )
-
-        # Replace "minio" with "localhost" for browser use
-        browser_url = presigned_url.replace("http://minio:9000", "http://localhost:9000")
-
-        return HttpResponseRedirect(browser_url)
-
-    except Exception as e:
-        raise Http404("Could not generate download link.")
+    # If using S3 directly, consider setting the Content-Disposition header to attachment
+    response = FileResponse(file.file.open('rb'), content_type=file.file.file.content_type)
+    response['Content-Disposition'] = f'attachment; filename="{file.name}"'  # Force download
+    return response
     
 # --------------------------
 # Preview file (Function-Based View)
@@ -289,6 +278,7 @@ def preview_file(request, pk):
     try:
         # Open file using Django storage backend
         file_handle = file.file.open("rb")
-        return FileResponse(file_handle, content_type=file.file.file.content_type)
+        content_type = mimetypes.guess_type(file.file.url)[0]  # Ensure correct MIME type is guessed
+        return FileResponse(file_handle, content_type=content_type)
     except Exception:
         raise Http404("File could not be previewed.")
