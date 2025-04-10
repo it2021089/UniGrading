@@ -198,7 +198,7 @@
         .then(response => response.json())
         .then(data => {
             if (data.status === "success") {
-                location.reload(); // Reload to show new category
+                location.reload(); 
             } else {
                 alert("Failed to add category.");
             }

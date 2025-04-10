@@ -16,6 +16,10 @@ import logging
 from django.conf import settings
 import boto3
 from botocore.exceptions import ClientError
+from django.http import HttpResponse
+from django.views.decorators.clickjacking import xframe_options_exempt
+
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -261,24 +265,32 @@ def delete_subcategory(request, pk):
 # --------------------------
 
 def download_file(request, file_id):
-    file = get_object_or_404(File, id=file_id)
-    # If using S3 directly, consider setting the Content-Disposition header to attachment
-    response = FileResponse(file.file.open('rb'), content_type=file.file.file.content_type)
-    response['Content-Disposition'] = f'attachment; filename="{file.name}"'  # Force download
+    file_obj = get_object_or_404(File, pk=file_id)
+
+    # Guess content type based on file name
+    content_type, _ = mimetypes.guess_type(file_obj.file.name)
+    content_type = content_type or 'application/octet-stream'
+
+    # Open and read the file from S3
+    file_data = file_obj.file.open()  # file_obj.file is a FieldFile, which uses S3Boto3Storage
+
+    response = HttpResponse(file_data, content_type=content_type)
+    response['Content-Disposition'] = f'attachment; filename="{file_obj.name}"'
     return response
     
 # --------------------------
 # Preview file (Function-Based View)
 # --------------------------
 
+@xframe_options_exempt 
 @login_required
 def preview_file(request, pk):
     file = get_object_or_404(File, pk=pk)
 
     try:
-        # Open file using Django storage backend
         file_handle = file.file.open("rb")
-        content_type = mimetypes.guess_type(file.file.url)[0]  # Ensure correct MIME type is guessed
-        return FileResponse(file_handle, content_type=content_type)
+        content_type = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
+        response = FileResponse(file_handle, content_type=content_type)
+        return response
     except Exception:
         raise Http404("File could not be previewed.")
