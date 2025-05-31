@@ -43,12 +43,7 @@
                                 <a href="{% url 'subjects:category_detail' subcategory.pk %}">
                                     <i class="fas fa-folder text-warning mr-2"></i> {{ subcategory.name }}
                                 </a>
-                                <button class="btn btn-sm btn-outline-danger"
-                                        data-toggle="modal"
-                                        data-target="#deleteModal"
-                                        data-item-id="{{ subcategory.pk }}"
-                                        data-item-name="{{ subcategory.name }}"
-                                        data-delete-url="{% url 'subjects:delete_subcategory' subcategory.pk %}">
+                                <button class="btn btn-sm btn-outline-danger" onclick="deleteSubcategory({{ subcategory.pk }}, '{{ subcategory.name }}')">
                                     <i class="fas fa-trash-alt"></i>
                                 </button>
                             </li>
@@ -65,26 +60,25 @@
                                         <div>
                                             <strong>{{ file.name }}</strong><br>
                                             <small class="text-muted">
-                                                Size: {{ file.file.size|filesizeformat }} |
+                                                {% if file.is_missing %}
+                                                    <span class="text-danger">[Missing from storage]</span>
+                                                {% else %}
+                                                    Size: {{ file.size_kb }} KB |
+                                                {% endif %}
                                                 Uploaded: {{ file.uploaded_at|naturaltime }}
                                             </small>
                                         </div>
                                     </div>
-
                                     <div class="btn-group">
                                         <button class="btn btn-sm btn-outline-info"
                                                 onclick="showPreview('{% url 'subjects:preview_file' file.pk %}', '{{ file.name }}')">
                                             <i class="fas fa-eye"></i> Preview
                                         </button>
-                                        <a href="{% url 'subjects:download_file' file.pk %}" class="btn btn-sm btn-outline-success">
-                                            <i class="fas fa-download"></i> Download
-                                        </a>
+                                        <button class="btn btn-sm btn-outline-success" onclick="safeDownload('{% url 'subjects:download_file' file.pk %}')">
+                                        <i class="fas fa-download"></i> Download
+                                        </button>
                                         <button class="btn btn-sm btn-outline-danger"
-                                                data-toggle="modal"
-                                                data-target="#deleteModal"
-                                                data-item-id="{{ file.pk }}"
-                                                data-item-name="{{ file.name }}"
-                                                data-delete-url="{% url 'subjects:delete_file' file.pk %}">
+                                                onclick="deleteFile({{ file.pk }}, '{{ file.name }}')">
                                             <i class="fas fa-trash-alt"></i>
                                         </button>
                                     </div>
@@ -122,67 +116,63 @@
 
 <!-- Preview Modal -->
 <div class="modal fade" id="previewModal" tabindex="-1" role="dialog" aria-labelledby="previewModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-lg modal-dialog-centered">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="previewModalLabel">Preview</h5>
-                <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
-            </div>
-            <div class="modal-body text-center">
-                <img id="previewImage" src="" class="img-fluid rounded" style="max-height: 500px; display: none;">
-                <iframe id="previewIframe" style="width: 100%; height: 500px; display: none;" frameborder="0"></iframe>
-            </div>
-            <div class="modal-footer">
-                <a id="downloadLink" class="btn btn-success" download target="_blank">
-                    <i class="fas fa-download"></i> Download
-                </a>
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-            </div>
-        </div>
+  <div class="modal-dialog modal-xl" role="document">
+    <div class="modal-content">
+      <div class="modal-header bg-primary text-white">
+        <h5 class="modal-title" id="previewModalLabel">File Preview</h5>
+        <button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
+      </div>
+      <div class="modal-body text-center">
+        <img id="previewImage" src="" class="img-fluid" style="display:none;" />
+        <iframe id="previewIframe" src="" width="100%" height="600px" frameborder="0" style="display:none;"></iframe>
+      </div>
+      <div class="modal-footer">
+        <a id="downloadLink" href="#" class="btn btn-success" download><i class="fas fa-download"></i> Download</a>
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
+      </div>
     </div>
+  </div>
 </div>
-
-<!-- Unsupported Preview Modal -->
-<div class="modal fade" id="unsupportedModal" tabindex="-1" role="dialog" aria-labelledby="unsupportedModalLabel" aria-hidden="true">
-    <div class="modal-dialog" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="unsupportedModalLabel">Preview Not Supported</h5>
-                <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
-            </div>
-            <div class="modal-body text-center">
-                <p class="lead">This file type cannot be previewed in the browser.</p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Close</button>
-            </div>
-        </div>
+<!-- Download Error Modal -->
+ <div class="modal fade" id="downloadErrorModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content border-danger">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title">Download Failed</h5>
+        <button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
+      </div>
+      <div class="modal-body" id="downloadErrorMessage">
+        The file you're trying to download does not exist anymore.
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger" data-dismiss="modal">OK</button>
+      </div>
     </div>
+  </div>
 </div>
-
-<!-- Delete Modal -->
-<div class="modal fade" id="deleteModal" tabindex="-1" role="dialog">
-    <div class="modal-dialog" role="document">
-        <form method="post" id="deleteForm">
-            {% csrf_token %}
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title">Delete Item</h5>
-                    <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
-                </div>
-                <div class="modal-body">
-                    Are you sure you want to delete <strong id="itemName"></strong>?
-                </div>
-                <div class="modal-footer">
-                    <button type="submit" class="btn btn-danger">Yes, Delete</button>
-                    <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-                </div>
-            </div>
-        </form>
+<!-- Unsupported Modal -->
+<div class="modal fade" id="unsupportedModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header bg-warning">
+        <h5 class="modal-title">Unsupported File</h5>
+        <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
+      </div>
+      <div class="modal-body">
+        <p>This file type cannot be previewed. Please download it instead.</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-warning" data-dismiss="modal">OK</button>
+      </div>
     </div>
+  </div>
 </div>
 
 <script>
+    function csrfToken() {
+        return '{{ csrf_token }}';
+    }
+
     function showPreview(url, filename) {
         const previewImage = document.getElementById('previewImage');
         const previewIframe = document.getElementById('previewIframe');
@@ -220,36 +210,72 @@
     function addFolder() {
         const name = document.getElementById('new-folder-name').value.trim();
         if (!name) return alert("Folder name cannot be empty.");
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.innerHTML = `{% csrf_token %}<input type="hidden" name="new_subcategory" value="${name}">`;
-        document.body.appendChild(form);
-        form.submit();
+        fetch("", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-CSRFToken": csrfToken()
+            },
+            body: `new_subcategory=${encodeURIComponent(name)}`
+        }).then(() => location.reload());
     }
 
     function addFile() {
         const fileInput = document.getElementById('file-input');
         if (fileInput.files.length === 0) return alert("Please select a file to upload.");
-        const form = document.createElement('form');
-        form.method = 'POST';
-        form.enctype = 'multipart/form-data';
-        form.innerHTML = `{% csrf_token %}<input type="hidden" name="new_file" value="true">`;
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.name = 'file';
-        input.files = fileInput.files;
-        form.appendChild(input);
-        document.body.appendChild(form);
-        form.submit();
+
+        const formData = new FormData();
+        formData.append('new_file', 'true');
+        formData.append('file', fileInput.files[0]);
+        formData.append('csrfmiddlewaretoken', csrfToken());
+
+        fetch("", {
+            method: "POST",
+            body: formData
+        }).then(() => location.reload());
     }
 
-    $('#deleteModal').on('show.bs.modal', function (event) {
-        const button = $(event.relatedTarget);
-        const deleteUrl = button.data('delete-url');
-        const itemName = button.data('item-name');
+    function deleteSubcategory(id, name) {
+        if (!confirm(`Are you sure you want to delete folder "${name}"?`)) return;
 
-        $('#itemName').text(itemName);
-        $('#deleteForm').attr('action', deleteUrl);
-    });
+        fetch("", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-CSRFToken": csrfToken()
+            },
+            body: `delete_subcategory=1&subcategory_id=${id}`
+        }).then(() => location.reload());
+    }
+
+    function deleteFile(id, name) {
+        if (!confirm(`Are you sure you want to delete file "${name}"?`)) return;
+
+        fetch("", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-CSRFToken": csrfToken()
+            },
+            body: `delete_file=1&file_id=${id}`
+        }).then(() => location.reload());
+    }
+    function safeDownload(url) {
+  fetch(url, {
+    method: 'GET',
+    headers: {
+      'X-Requested-With': 'XMLHttpRequest'
+    }
+  }).then(response => {
+    if (response.ok) {
+      window.location.href = url; 
+    } else {
+      $('#downloadErrorModal').modal('show');
+    }
+  }).catch(err => {
+    console.error(err);
+    $('#downloadErrorModal').modal('show');
+  });
+}
 </script>
 {% endblock %}

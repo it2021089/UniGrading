@@ -1,5 +1,5 @@
 from django.shortcuts import render, get_object_or_404, redirect
-from django.http import Http404, JsonResponse, HttpResponseRedirect, FileResponse
+from django.http import Http404, JsonResponse, HttpResponseRedirect, FileResponse, HttpResponse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import DetailView, ListView, CreateView
@@ -9,17 +9,14 @@ from django.urls import reverse_lazy
 from .models import Subject, Category, File
 from .forms import SubjectForm
 from UniGrading.mixin import BreadcrumbMixin
-from django.db import transaction, IntegrityError
-from django.contrib import messages 
+from django.db import transaction
+from django.contrib import messages
 import mimetypes
 import logging
-from django.conf import settings
-import boto3
 from botocore.exceptions import ClientError
-from django.http import HttpResponse
+from django.conf import settings
+from django.views.decorators.http import require_GET
 from django.views.decorators.clickjacking import xframe_options_exempt
-
-
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -44,9 +41,6 @@ class MySubjectsView(LoginRequiredMixin, BreadcrumbMixin, ListView):
             ("Dashboard", dashboard_url),
             ("My Subjects", reverse_lazy("subjects:my_subjects")),
         ]
-
-    def post(self, request, *args, **kwargs):
-        return self.get(request, *args, **kwargs)
 
 # --------------------------
 # Create Subject View
@@ -144,10 +138,21 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             category = get_object_or_404(Category, id=category_id)
             category.delete()
             return JsonResponse({"status": "success", "message": "Category deleted!"})
+        elif "update_subject_name" in data:
+            new_name = data.get("subject_name", "").strip()
+            if new_name:
+                subject.name = new_name
+                subject.save()
+                return JsonResponse({"status": "success", "message": "Subject name updated!"})
+            else:
+                return JsonResponse({"status": "error", "message": "Name cannot be empty."})
 
         return redirect(self.request.path)
 
+# --------------------------
 # Category Detail View
+# --------------------------
+
 class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     model = Category
     template_name = "category_detail.html"
@@ -171,20 +176,31 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         category = self.object
-        files = category.files.all()
 
-        # Enhance file metadata
-        for file in files:
-            file.extension = file.name.split('.')[-1].lower()
-            file.mimetype, _ = mimetypes.guess_type(file.file.url)
-            try:
-                file.size_kb = round(file.file.size / 1024, 2)
-            except Exception:
-                file.size_kb = "-"
-
-        context["breadcrumbs"] = self.get_breadcrumbs()
+        # Subcategories
         context["subcategories"] = category.subcategories.all()
+
+        # Files with error-safe metadata
+        files = []
+        for f in category.files.all():
+            try:
+                size_kb = round(f.file.size / 1024, 2)
+                mimetype, _ = mimetypes.guess_type(f.file.url)
+                is_missing = False
+            except (FileNotFoundError, ClientError) as e:
+                logger.warning(f"Missing file: {f.name} — {e}")
+                size_kb = "-"
+                mimetype = "unknown/unknown"
+                is_missing = True
+
+            f.extension = f.name.split('.')[-1].lower()
+            f.size_kb = size_kb
+            f.mimetype = mimetype
+            f.is_missing = is_missing
+            files.append(f)
+
         context["files"] = files
+        context["breadcrumbs"] = self.get_breadcrumbs()
         return context
 
     def post(self, request, *args, **kwargs):
@@ -208,6 +224,24 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
                 messages.success(request, "File uploaded successfully!")
             except Exception as e:
                 messages.error(request, f"Upload failed: {str(e)}")
+
+        elif "delete_subcategory" in data:
+            subcategory_id = data.get("subcategory_id")
+            subcategory = get_object_or_404(Category, id=subcategory_id, parent=category)
+            try:
+                subcategory.delete()
+                messages.success(request, "Subcategory deleted successfully!")
+            except Exception as e:
+                messages.error(request, f"Failed to delete subcategory: {str(e)}")
+
+        elif "delete_file" in data:
+            file_id = data.get("file_id")
+            file = get_object_or_404(File, id=file_id, category=category)
+            try:
+                file.delete()
+                messages.success(request, "File deleted successfully!")
+            except Exception as e:
+                messages.error(request, f"Failed to delete file: {str(e)}")
 
         return redirect(self.request.path)
 
@@ -246,6 +280,7 @@ def delete_file(request, pk):
         logger.error(f"Error deleting file: {e}")
         messages.error(request, "An error occurred while deleting the file.")
     return redirect('subjects:category_detail', pk=file.category.pk)
+
 # --------------------------
 # Delete Subcategory (Function-Based View)
 # --------------------------
@@ -255,34 +290,44 @@ def delete_subcategory(request, pk):
     parent_category_pk = subcategory.parent.pk if subcategory.parent else subcategory.subject.pk
 
     if subcategory.files.exists() or subcategory.subcategories.exists():
+        messages.error(request, "Cannot delete a non-empty folder.")
         return redirect("subjects:category_detail", pk=parent_category_pk)
 
-    subcategory.delete()
+    try:
+        subcategory.delete()
+        messages.success(request, "Folder deleted successfully.")
+    except Exception as e:
+        messages.error(request, f"An error occurred while deleting the folder: {e}")
     return redirect("subjects:category_detail", pk=parent_category_pk)
 
 # --------------------------
-# Download file (Function-Based View)
+# Download File (Function-Based View)
 # --------------------------
-
+@require_GET
 def download_file(request, file_id):
     file_obj = get_object_or_404(File, pk=file_id)
 
-    # Guess content type based on file name
-    content_type, _ = mimetypes.guess_type(file_obj.file.name)
-    content_type = content_type or 'application/octet-stream'
+    try:
+        content_type, _ = mimetypes.guess_type(file_obj.file.name)
+        content_type = content_type or 'application/octet-stream'
+        file_data = file_obj.file.open()
 
-    # Open and read the file from S3
-    file_data = file_obj.file.open()  # file_obj.file is a FieldFile, which uses S3Boto3Storage
+        response = HttpResponse(file_data, content_type=content_type)
+        response['Content-Disposition'] = f'attachment; filename="{file_obj.name}"'
+        return response
 
-    response = HttpResponse(file_data, content_type=content_type)
-    response['Content-Disposition'] = f'attachment; filename="{file_obj.name}"'
-    return response
-    
+    except (FileNotFoundError, ClientError) as e:
+        logger.warning(f"Download failed — missing file: {file_obj.name} | {e}")
+        if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+            return JsonResponse({"status": "error", "message": "File not found"}, status=404)
+        else:
+            # fallback if JS isn't used
+            return redirect('subjects:category_detail', pk=file_obj.category.pk)
+
 # --------------------------
-# Preview file (Function-Based View)
+# Preview File (Function-Based View)
 # --------------------------
-
-@xframe_options_exempt 
+@xframe_options_exempt
 @login_required
 def preview_file(request, pk):
     file = get_object_or_404(File, pk=pk)
