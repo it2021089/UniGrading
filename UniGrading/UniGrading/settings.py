@@ -130,8 +130,8 @@ DATABASES = {
 # =======================================
 # MinIO / S3 Storage Configuration
 # =======================================
-AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID', 'Dpa10KF1UZygmxyr36HW') # zAN5P7ekIrJdORdVtCPF <- Linux #Windows -> Dpa10KF1UZygmxyr36HW
-AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY', 'ecoN8snDkWsunb6D2R5GPe3sRYp3KflOVLgXZ2zd') # whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS <- Linux #Windows -> ecoN8snDkWsunb6D2R5GPe3sRYp3KflOVLgXZ2zd
+AWS_ACCESS_KEY_ID = os.getenv('AWS_ACCESS_KEY_ID', 'zAN5P7ekIrJdORdVtCPF') # zAN5P7ekIrJdORdVtCPF <- Linux #Windows -> Dpa10KF1UZygmxyr36HW
+AWS_SECRET_ACCESS_KEY = os.getenv('AWS_SECRET_ACCESS_KEY', 'hpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS') # whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS <- Linux #Windows -> ecoN8snDkWsunb6D2R5GPe3sRYp3KflOVLgXZ2zd
 AWS_STORAGE_BUCKET_NAME = os.getenv('AWS_STORAGE_BUCKET_NAME', 'files')
 AWS_S3_ENDPOINT_URL = os.getenv("AWS_S3_ENDPOINT_URL", "http://minio:9000")
 #AWS_S3_CUSTOM_DOMAIN = os.getenv("AWS_S3_CUSTOM_DOMAIN", "127.0.0.1:9000")

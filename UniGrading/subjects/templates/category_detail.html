@@ -40,12 +40,38 @@
                         <!-- Subcategories -->
                         {% for subcategory in category.subcategories.all %}
                             <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <a href="{% url 'subjects:category_detail' subcategory.pk %}">
-                                    <i class="fas fa-folder text-warning mr-2"></i> {{ subcategory.name }}
-                                </a>
-                                <button class="btn btn-sm btn-outline-danger" onclick="deleteSubcategory({{ subcategory.pk }}, '{{ subcategory.name }}')">
-                                    <i class="fas fa-trash-alt"></i>
-                                </button>
+                                <div class="d-flex align-items-center flex-grow-1">
+                                    <i class="fas fa-folder text-warning mr-2"></i>
+                                    <div class="subcategory-name" style="flex-grow: 1;">
+                                        <a href="{% url 'subjects:category_detail' subcategory.pk %}">
+                                            <span id="subcategory-name-{{ subcategory.pk }}">{{ subcategory.name }}</span>
+                                        </a>
+                                        <div class="edit-form d-none mt-2">
+                                            <div class="input-group">
+                                                <input type="text" 
+                                                       id="edit-subcategory-{{ subcategory.pk }}"
+                                                       value="{{ subcategory.name }}" 
+                                                       class="form-control">
+                                                <div class="input-group-append">
+                                                    <button class="btn btn-success" onclick="saveSubcategoryRename({{ subcategory.pk }})">
+                                                        <i class="fas fa-check"></i>
+                                                    </button>
+                                                    <button class="btn btn-secondary" onclick="cancelSubcategoryRename({{ subcategory.pk }})">
+                                                        <i class="fas fa-times"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div>
+                                    <button class="btn btn-sm btn-outline-primary mr-1" onclick="startEdit({{ subcategory.pk }})">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-danger" onclick="showDeleteSubcategoryModal({{ subcategory.pk }}, '{{ subcategory.name }}')">
+                                        <i class="fas fa-trash-alt"></i>
+                                    </button>
+                                </div>
                             </li>
                         {% empty %}
                             <li class="list-group-item text-muted">No folders available.</li>
@@ -75,7 +101,7 @@
                                             <i class="fas fa-eye"></i> Preview
                                         </button>
                                         <button class="btn btn-sm btn-outline-success" onclick="safeDownload('{% url 'subjects:download_file' file.pk %}')">
-                                        <i class="fas fa-download"></i> Download
+                                            <i class="fas fa-download"></i> Download
                                         </button>
                                         <button class="btn btn-sm btn-outline-danger"
                                                 onclick="deleteFile({{ file.pk }}, '{{ file.name }}')">
@@ -133,8 +159,9 @@
     </div>
   </div>
 </div>
+
 <!-- Download Error Modal -->
- <div class="modal fade" id="downloadErrorModal" tabindex="-1" role="dialog" aria-hidden="true">
+<div class="modal fade" id="downloadErrorModal" tabindex="-1" role="dialog" aria-hidden="true">
   <div class="modal-dialog" role="document">
     <div class="modal-content border-danger">
       <div class="modal-header bg-danger text-white">
@@ -150,7 +177,61 @@
     </div>
   </div>
 </div>
-<!-- Unsupported Modal -->
+
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteSubcategoryModal" tabindex="-1" role="dialog" aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content border-danger">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title">Confirm Deletion</h5>
+        <button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
+      </div>
+      <div class="modal-body">
+        Are you sure you want to delete the folder "<span id="subcategoryToDeleteName"></span>"?
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+        <button type="button" class="btn btn-danger" onclick="confirmDeleteSubcategory()">Delete</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Info Modal for duplicate subcategory -->
+<div class="modal fade" id="infoModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+      <div class="modal-content border-warning">
+        <div class="modal-header bg-warning text-white">
+          <h5 class="modal-title">Duplicate Name</h5>
+          <button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
+        </div>
+        <div class="modal-body">
+          A folder with this name already exists.
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-warning" data-dismiss="modal">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- Info Modal -->
+<div class="modal fade" id="infoModal" tabindex="-1" role="dialog" aria-hidden="true">
+    <div class="modal-dialog" role="document">
+      <div class="modal-content border-warning">
+        <div class="modal-header bg-warning text-white">
+          <h5 class="modal-title">Warning</h5>
+          <button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
+        </div>
+        <div class="modal-body" id="infoModalMessage">
+          <!-- message injected by JS -->
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-warning" data-dismiss="modal">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+<!-- Unsupported File Modal -->
 <div class="modal fade" id="unsupportedModal" tabindex="-1" role="dialog" aria-hidden="true">
   <div class="modal-dialog" role="document">
     <div class="modal-content">
@@ -169,8 +250,75 @@
 </div>
 
 <script>
+    // Variables to store subcategory deletion data
+    let subcategoryToDeleteId = null;
+    let subcategoryToDeleteName = null;
+
     function csrfToken() {
         return '{{ csrf_token }}';
+    }
+
+    function showDeleteSubcategoryModal(id, name) {
+        subcategoryToDeleteId = id;
+        subcategoryToDeleteName = name;
+        document.getElementById('subcategoryToDeleteName').textContent = name;
+        $('#deleteSubcategoryModal').modal('show');
+    }
+
+    function confirmDeleteSubcategory() {
+        if (!subcategoryToDeleteId) return;
+        
+        fetch("", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/x-www-form-urlencoded",
+                "X-CSRFToken": csrfToken()
+            },
+            body: `delete_subcategory=1&subcategory_id=${subcategoryToDeleteId}`
+        }).then(() => {
+            $('#deleteSubcategoryModal').modal('hide');
+            location.reload();
+        });
+    }
+
+    function startEdit(id) {
+        // Hide the name and show the edit form
+        document.querySelector(`#subcategory-name-${id}`).closest('a').style.display = 'none';
+        document.querySelector(`#subcategory-name-${id}`).closest('.subcategory-name').querySelector('.edit-form').classList.remove('d-none');
+        document.querySelector(`#edit-subcategory-${id}`).focus();
+    }
+
+    function cancelSubcategoryRename(id) {
+        // Show the name and hide the edit form
+        document.querySelector(`#subcategory-name-${id}`).closest('a').style.display = '';
+        document.querySelector(`#subcategory-name-${id}`).closest('.subcategory-name').querySelector('.edit-form').classList.add('d-none');
+    }
+
+    function saveSubcategoryRename(id) {
+        const newName = document.querySelector(`#edit-subcategory-${id}`).value.trim();
+        
+        if (!newName) {
+            alert("Name cannot be empty.");
+            return;
+        }
+
+        const formData = new URLSearchParams();
+        formData.append("update_subcategory", "1");
+        formData.append("subcategory_id", id);
+        formData.append("subcategory_name", newName);
+        formData.append("csrfmiddlewaretoken", csrfToken());
+
+        fetch("", {
+            method: "POST",
+            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+            body: formData.toString()
+        }).then(res => {
+            if (res.redirected) {
+                window.location.href = res.url;
+            } else {
+                window.location.reload();
+            }
+        });
     }
 
     function showPreview(url, filename) {
@@ -206,76 +354,56 @@
                 console.error(err);
             });
     }
-
-    function addFolder() {
+    function showInfo(msg) {
+        $('#infoModalMessage').text(msg);
+        $('#infoModal').modal('show');
+      }
+      function addFolder() {
         const name = document.getElementById('new-folder-name').value.trim();
-        if (!name) return alert("Folder name cannot be empty.");
+        if (!name) { showInfo("Folder name cannot be empty."); return; }
+    
         fetch("", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "X-CSRFToken": csrfToken()
-            },
-            body: `new_subcategory=${encodeURIComponent(name)}`
-        }).then(() => location.reload());
-    }
-
-    function addFile() {
-        const fileInput = document.getElementById('file-input');
-        if (fileInput.files.length === 0) return alert("Please select a file to upload.");
-
-        const formData = new FormData();
-        formData.append('new_file', 'true');
-        formData.append('file', fileInput.files[0]);
-        formData.append('csrfmiddlewaretoken', csrfToken());
-
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-CSRFToken": csrfToken(),
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          body: `new_subcategory=${encodeURIComponent(name)}`
+        })
+        .then(r => r.ok ? r.json() : r.json())
+        .then(data => {
+          if (data.status === 'error') {
+            showInfo(data.message || "A folder with this name already exists.");
+          } else {
+            location.reload();
+          }
+        })
+        .catch(() => showInfo("Something went wrong. Please try again."));
+      }
+    
+      function saveSubcategoryRename(id) {
+        const newName = document.querySelector(`#edit-subcategory-${id}`).value.trim();
+        if (!newName) { showInfo("Folder name cannot be empty."); return; }
+    
         fetch("", {
-            method: "POST",
-            body: formData
-        }).then(() => location.reload());
-    }
-
-    function deleteSubcategory(id, name) {
-        if (!confirm(`Are you sure you want to delete folder "${name}"?`)) return;
-
-        fetch("", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "X-CSRFToken": csrfToken()
-            },
-            body: `delete_subcategory=1&subcategory_id=${id}`
-        }).then(() => location.reload());
-    }
-
-    function deleteFile(id, name) {
-        if (!confirm(`Are you sure you want to delete file "${name}"?`)) return;
-
-        fetch("", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "X-CSRFToken": csrfToken()
-            },
-            body: `delete_file=1&file_id=${id}`
-        }).then(() => location.reload());
-    }
-    function safeDownload(url) {
-  fetch(url, {
-    method: 'GET',
-    headers: {
-      'X-Requested-With': 'XMLHttpRequest'
-    }
-  }).then(response => {
-    if (response.ok) {
-      window.location.href = url; 
-    } else {
-      $('#downloadErrorModal').modal('show');
-    }
-  }).catch(err => {
-    console.error(err);
-    $('#downloadErrorModal').modal('show');
-  });
-}
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            "X-CSRFToken": csrfToken(),
+            "X-Requested-With": "XMLHttpRequest"
+          },
+          body: `update_subcategory=1&subcategory_id=${id}&subcategory_name=${encodeURIComponent(newName)}`
+        })
+        .then(r => r.ok ? r.json() : r.json())
+        .then(data => {
+          if (data.status === 'error') {
+            showInfo(data.message || "A folder with this name already exists.");
+          } else {
+            location.reload();
+          }
+        })
+        .catch(() => showInfo("Something went wrong. Please try again."));
+      }
 </script>
 {% endblock %}

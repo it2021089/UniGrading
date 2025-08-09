@@ -23,7 +23,7 @@
                         <input type="text" id="subject-name" class="form-control-plaintext text-white h4 w-100" readonly value="{{ subject.name }}">
                     </h4>
                     <div class="btn-group ml-3">
-                        <button class="btn btn-sm btn-light" onclick="editSubjectName()"><i class="fas fa-edit"></i></button>
+                        <button class="btn btn-sm btn-outline-primary mr-1" onclick="editSubjectName()"><i class="fas fa-edit"></i></button>
                         <button class="btn btn-sm btn-success d-none" id="save-subject-name" onclick="saveSubjectName()"><i class="fas fa-check"></i></button>
                         <button class="btn btn-sm btn-danger d-none" id="cancel-subject-name" onclick="cancelSubjectNameEdit()"><i class="fas fa-times"></i></button>
                     </div>
@@ -35,7 +35,7 @@
                         <label class="form-label font-weight-bold">Description</label>
                         <textarea id="subject-description" class="form-control" rows="3" readonly>{{ subject.description }}</textarea>
                         <div class="mt-2">
-                            <button class="btn btn-outline-secondary btn-sm" onclick="editDescription()">Edit</button>
+                            <button class="btn btn-sm btn-outline-primary mr-1" onclick="editDescription()">Edit</button>
                             <button class="btn btn-success btn-sm d-none" id="save-description" onclick="saveDescription()">Save</button>
                             <button class="btn btn-danger btn-sm d-none" id="cancel-description" onclick="cancelEdit()">Cancel</button>
                         </div>
@@ -45,19 +45,34 @@
                     <h5 class="font-weight-bold mb-3">Categories</h5>
                     <ul class="list-group mb-4" id="categories-list">
                         {% for category in categories %}
-                            <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <a href="{% url 'subjects:category_detail' category.id %}" class="d-flex align-items-center w-100 text-decoration-none text-dark">
-                                    <i class="fas fa-folder text-warning mr-2"></i>
-                                    <span>{{ category.name }}</span>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <div class="d-flex align-items-center w-100">
+                                <i class="fas fa-folder text-warning mr-2"></i>
+                                {% if category.name == 'Assignments' %}
+                                <a href="/assignments/{{ subject.id }}/" class="flex-grow-1 text-primary text-decoration-none">
+                                    {{ category.name }}
                                 </a>
-                                <div class="btn-group ml-2">
-                                    <button class="btn btn-outline-secondary btn-sm" onclick="editCategoryName({{ category.id }})"><i class="fas fa-edit"></i></button>
+                            {% else %}
+                                <a href="/subjects/category/{{ category.id }}/" class="flex-grow-1 text-primary text-decoration-none">
+                                    {{ category.name }}
+                                </a>
+                            {% endif %}
+
+                                {% if category.name in protected_categories %}
+                                    <span class="badge badge-secondary ml-2">Default</span>
+                                {% endif %}
+                            </div>
+                            <div class="btn-group ml-2">
+                                {% if category.name not in protected_categories %}
+                                    <button class="btn btn-sm btn-outline-primary mr-1" onclick="editCategoryName({{ category.id }})"><i class="fas fa-edit"></i></button>
                                     <button class="btn btn-outline-success btn-sm d-none" id="save-category-{{ category.id }}" onclick="saveCategoryName({{ category.id }})"><i class="fas fa-check"></i></button>
                                     <button class="btn btn-outline-danger btn-sm" onclick="confirmDeleteCategory({{ category.id }})"><i class="fas fa-trash-alt"></i></button>
-                                </div>
-                            </li>
+                                    <button class="btn btn-outline-danger btn-sm d-none" id="cancel-category-{{ category.id }}" onclick="cancelCategoryEdit({{ category.id }}, '{{ category.name }}')"><i class="fas fa-times"></i></button>
+                                {% endif %}
+                            </div>
+                        </li>
                         {% empty %}
-                            <li class="list-group-item text-muted">No categories available.</li>
+                        <li class="list-group-item text-muted">No categories available.</li>
                         {% endfor %}
                     </ul>
 
@@ -123,6 +138,16 @@ function showConfirm(message, onYes) {
     $('#confirmModal').modal('show');
 }
 
+function onCategoryClick(id, name) {
+    const input = document.getElementById(`category-name-${id}`);
+    if (!input.readOnly) return;  // Prevent navigation during editing
+
+    if (name === "Assignments") {
+        window.location.href = "/assignments/{{ subject.id }}/";
+    } else {
+        window.location.href = `/subjects/category/${id}/`;  // Adjust to your route
+    }
+}
 function editSubjectName() {
     const input = document.getElementById("subject-name");
     input.readOnly = false;
@@ -210,7 +235,15 @@ function addCategory() {
             "X-CSRFToken": csrf()
         },
         body: `new_category=${encodeURIComponent(name)}`
-    }).then(() => location.reload());
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.status === "success") {
+            location.reload();
+        } else if (d.status === "error") {
+            showInfo(d.message || "Could not add category.");
+        }
+    });
 }
 
 function editCategoryName(id) {
@@ -219,10 +252,22 @@ function editCategoryName(id) {
     input.classList.remove("form-control-plaintext");
     input.classList.add("form-control", "bg-white");
     document.getElementById(`save-category-${id}`).classList.remove("d-none");
+    document.getElementById(`cancel-category-${id}`).classList.remove("d-none");
+}
+
+function cancelCategoryEdit(id, originalName) {
+    const input = document.getElementById(`category-name-${id}`);
+    input.value = originalName;
+    input.readOnly = true;
+    input.classList.add("form-control-plaintext");
+    input.classList.remove("form-control", "bg-white");
+    document.getElementById(`save-category-${id}`).classList.add("d-none");
+    document.getElementById(`cancel-category-${id}`).classList.add("d-none");
 }
 
 function saveCategoryName(id) {
-    const name = document.getElementById(`category-name-${id}`).value.trim();
+    const input = document.getElementById(`category-name-${id}`);
+    const name = input.value.trim();
     if (!name) return showInfo("Name cannot be empty.");
     fetch(window.location.href, {
         method: "POST",
@@ -231,7 +276,15 @@ function saveCategoryName(id) {
             "X-CSRFToken": csrf()
         },
         body: `update_category=1&category_id=${id}&category_name=${encodeURIComponent(name)}`
-    }).then(() => location.reload());
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.status === "error" && d.message.includes("already exists")) {
+            showInfo(d.message);
+        } else {
+            location.reload();
+        }
+    });
 }
 </script>
 {% endblock %}

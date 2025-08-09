@@ -114,12 +114,16 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["categories"] = self.object.categories.filter(parent__isnull=True)
+        context["protected_categories"] = ["Courses", "Assignments", "Tests", "Other"]
+        context["breadcrumbs"] = self.get_breadcrumbs()
         return context
 
     def post(self, request, *args, **kwargs):
         subject = self.get_object()
         data = request.POST
+        protected_categories = ["Courses", "Assignments", "Tests", "Other"]
 
+        # === Update subject description ===
         if "description" in data:
             new_description = data.get("description", "").strip()
             if new_description:
@@ -127,25 +131,54 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
                 subject.save()
                 return JsonResponse({"status": "success", "message": "Description updated!"})
 
+        # === Add new category ===
         elif "new_category" in data:
             category_name = data.get("new_category", "").strip()
             if category_name:
-                category = Category.objects.create(subject=subject, name=category_name, parent=None)
-                return JsonResponse({"status": "success", "message": "Category added!", "category_id": category.id, "category_name": category.name})
+                if Category.objects.filter(subject=subject, name=category_name, parent=None).exists():
+                    return JsonResponse({"status": "error", "message": "A category with this name already exists."})
 
+                category = Category.objects.create(subject=subject, name=category_name, parent=None)
+                return JsonResponse({
+                    "status": "success",
+                    "message": "Category added!",
+                    "category_id": category.id,
+                    "category_name": category.name
+                })
+
+        # === Delete a category ===
         elif "delete_category" in data:
             category_id = data.get("category_id")
             category = get_object_or_404(Category, id=category_id)
+
+            if category.parent is None and category.name in protected_categories:
+                return JsonResponse({"status": "error", "message": "This category cannot be deleted."})
+
             category.delete()
             return JsonResponse({"status": "success", "message": "Category deleted!"})
-        elif "update_subject_name" in data:
-            new_name = data.get("subject_name", "").strip()
-            if new_name:
-                subject.name = new_name
-                subject.save()
-                return JsonResponse({"status": "success", "message": "Subject name updated!"})
-            else:
-                return JsonResponse({"status": "error", "message": "Name cannot be empty."})
+
+        # === Update subject name ===
+        elif "update_category" in data:
+                    category_id = data.get("category_id")
+                    new_name = data.get("category_name", "").strip()
+
+                    if not new_name:
+                        return JsonResponse({"status": "error", "message": "Name cannot be empty."})
+
+                    try:
+                        category = Category.objects.get(id=category_id, subject=subject)
+
+                        if category.parent is None and category.name in protected_categories:
+                            return JsonResponse({"status": "error", "message": "This category cannot be renamed."})
+
+                        if Category.objects.filter(subject=subject, name=new_name, parent=None).exclude(id=category.id).exists():
+                            return JsonResponse({"status": "error", "message": "A category with this name already exists."})
+
+                        category.name = new_name
+                        category.save()
+                        return JsonResponse({"status": "success", "message": "Category name updated!"})
+                    except Category.DoesNotExist:
+                        return JsonResponse({"status": "error", "message": "Category not found."})
 
         return redirect(self.request.path)
 
@@ -160,18 +193,36 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
 
     def get_breadcrumbs(self):
         category = self.get_object()
-        dashboard_url = reverse_lazy("users:login")
+
+        # Get correct dashboard based on role
         if self.request.user.role == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
         elif self.request.user.role == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
+        else:
+            dashboard_url = reverse_lazy("users:login")
 
-        return [
+        # Traverse up through parent categories to build path
+        breadcrumb_categories = []
+        current = category
+        while current is not None:
+            breadcrumb_categories.insert(0, current)
+            current = current.parent
+
+        # Build final breadcrumb list
+        breadcrumbs = [
             ("Dashboard", dashboard_url),
             ("My Subjects", reverse_lazy("subjects:my_subjects")),
             (f"Subject: {category.subject.name}", reverse_lazy("subjects:subject_detail", args=[category.subject.pk])),
-            (f"Category: {category.name}", self.request.path),
         ]
+
+        for c in breadcrumb_categories:
+            if c == category:
+                breadcrumbs.append((f"Category: {c.name}", self.request.path))
+            else:
+                breadcrumbs.append((f"Category: {c.name}", reverse_lazy("subjects:category_detail", args=[c.pk])))
+
+        return breadcrumbs
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
@@ -180,7 +231,7 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
         # Subcategories
         context["subcategories"] = category.subcategories.all()
 
-        # Files with error-safe metadata
+        # Files with metadata
         files = []
         for f in category.files.all():
             try:
@@ -210,8 +261,12 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
         if "new_subcategory" in data:
             subcategory_name = data.get("new_subcategory", "").strip()
             if subcategory_name:
-                Category.objects.create(subject=category.subject, name=subcategory_name, parent=category)
-                messages.success(request, "Subcategory added successfully!")
+                # check if subcategory already exists under same parent
+                if Category.objects.filter(subject=category.subject, parent=category, name=subcategory_name).exists():
+                    messages.error(request, "A subcategory with this name already exists.")
+                else:
+                    Category.objects.create(subject=category.subject, name=subcategory_name, parent=category)
+                    messages.success(request, "Subcategory added successfully!")
 
         elif "new_file" in request.POST:
             if "file" not in request.FILES:
@@ -242,6 +297,26 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
                 messages.success(request, "File deleted successfully!")
             except Exception as e:
                 messages.error(request, f"Failed to delete file: {str(e)}")
+
+        elif "update_subcategory" in data:
+            subcategory_id = data.get("subcategory_id")
+            new_name = data.get("subcategory_name", "").strip()
+
+            if not new_name:
+                messages.error(request, "Name cannot be empty.")
+                return redirect(self.request.path)
+
+            try:
+                subcategory = Category.objects.get(id=subcategory_id, parent=category)
+
+                if Category.objects.filter(subject=category.subject, parent=category, name=new_name).exclude(id=subcategory.id).exists():
+                    messages.error(request, "A subcategory with this name already exists.")
+                else:
+                    subcategory.name = new_name
+                    subcategory.save()
+                    messages.success(request, "Folder renamed successfully!")
+            except Category.DoesNotExist:
+                messages.error(request, "Folder not found.")
 
         return redirect(self.request.path)
 
@@ -325,7 +400,7 @@ def download_file(request, file_id):
             return redirect('subjects:category_detail', pk=file_obj.category.pk)
 
 # --------------------------
-# Preview File (Function-Based View)
+# Preview File 
 # --------------------------
 @xframe_options_exempt
 @login_required
