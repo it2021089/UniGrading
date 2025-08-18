@@ -18,14 +18,28 @@
     <div class="row justify-content-center">
         <div class="col-md-10">
             <div class="card shadow-sm no-hover-card">
+                <!-- Header: make action buttons visible on blue by using btn-light -->
                 <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                    <h4 class="mb-0 w-100">
-                        <input type="text" id="subject-name" class="form-control-plaintext text-white h4 w-100" readonly value="{{ subject.name }}">
-                    </h4>
+                    <div class="w-100">
+                        <input
+                            type="text"
+                            id="subject-name"
+                            class="form-control-plaintext text-white h4 w-100"
+                            readonly
+                            value="{{ subject.name }}"
+                        >
+                    </div>
                     <div class="btn-group ml-3">
-                        <button class="btn btn-sm btn-outline-primary mr-1" onclick="editSubjectName()"><i class="fas fa-edit"></i></button>
-                        <button class="btn btn-sm btn-success d-none" id="save-subject-name" onclick="saveSubjectName()"><i class="fas fa-check"></i></button>
-                        <button class="btn btn-sm btn-danger d-none" id="cancel-subject-name" onclick="cancelSubjectNameEdit()"><i class="fas fa-times"></i></button>
+                        <!-- Visible on blue background -->
+                        <button class="btn btn-sm btn-light mr-1" id="btn-edit-title" onclick="editSubjectName()">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn btn-sm btn-success d-none" id="save-subject-name" onclick="saveSubjectName()">
+                            <i class="fas fa-check"></i>
+                        </button>
+                        <button class="btn btn-sm btn-outline-light d-none" id="cancel-subject-name" onclick="cancelSubjectNameEdit()">
+                            <i class="fas fa-times"></i>
+                        </button>
                     </div>
                 </div>
 
@@ -48,26 +62,37 @@
                         <li class="list-group-item d-flex justify-content-between align-items-center">
                             <div class="d-flex align-items-center w-100">
                                 <i class="fas fa-folder text-warning mr-2"></i>
-                                {% if category.name == 'Assignments' %}
-                                <a href="/assignments/{{ subject.id }}/" class="flex-grow-1 text-primary text-decoration-none">
-                                    {{ category.name }}
-                                </a>
-                            {% else %}
-                                <a href="/subjects/category/{{ category.id }}/" class="flex-grow-1 text-primary text-decoration-none">
-                                    {{ category.name }}
-                                </a>
-                            {% endif %}
+
+                                <!-- Render as readonly input so JS can toggle edit -->
+                                <input
+                                    id="category-name-{{ category.id }}"
+                                    type="text"
+                                    class="form-control-plaintext flex-grow-1 text-primary"
+                                    value="{{ category.name }}"
+                                    readonly
+                                    style="cursor:pointer"
+                                    onclick="navigateIfReadonly({{ category.id }}, '{{ category.name }}')"
+                                />
 
                                 {% if category.name in protected_categories %}
                                     <span class="badge badge-secondary ml-2">Default</span>
                                 {% endif %}
                             </div>
+
                             <div class="btn-group ml-2">
                                 {% if category.name not in protected_categories %}
-                                    <button class="btn btn-sm btn-outline-primary mr-1" onclick="editCategoryName({{ category.id }})"><i class="fas fa-edit"></i></button>
-                                    <button class="btn btn-outline-success btn-sm d-none" id="save-category-{{ category.id }}" onclick="saveCategoryName({{ category.id }})"><i class="fas fa-check"></i></button>
-                                    <button class="btn btn-outline-danger btn-sm" onclick="confirmDeleteCategory({{ category.id }})"><i class="fas fa-trash-alt"></i></button>
-                                    <button class="btn btn-outline-danger btn-sm d-none" id="cancel-category-{{ category.id }}" onclick="cancelCategoryEdit({{ category.id }}, '{{ category.name }}')"><i class="fas fa-times"></i></button>
+                                    <button class="btn btn-sm btn-outline-primary mr-1" onclick="editCategoryName({{ category.id }})">
+                                        <i class="fas fa-edit"></i>
+                                    </button>
+                                    <button class="btn btn-outline-success btn-sm d-none" id="save-category-{{ category.id }}" onclick="saveCategoryName({{ category.id }})">
+                                        <i class="fas fa-check"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger btn-sm" onclick="confirmDeleteCategory({{ category.id }})">
+                                        <i class="fas fa-trash-alt"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger btn-sm d-none" id="cancel-category-{{ category.id }}" onclick="cancelCategoryEdit({{ category.id }}, '{{ category.name }}')">
+                                        <i class="fas fa-times"></i>
+                                    </button>
                                 {% endif %}
                             </div>
                         </li>
@@ -138,16 +163,7 @@ function showConfirm(message, onYes) {
     $('#confirmModal').modal('show');
 }
 
-function onCategoryClick(id, name) {
-    const input = document.getElementById(`category-name-${id}`);
-    if (!input.readOnly) return;  // Prevent navigation during editing
-
-    if (name === "Assignments") {
-        window.location.href = "/assignments/{{ subject.id }}/";
-    } else {
-        window.location.href = `/subjects/category/${id}/`;  // Adjust to your route
-    }
-}
+/* ===== Subject title editing ===== */
 function editSubjectName() {
     const input = document.getElementById("subject-name");
     input.readOnly = false;
@@ -155,21 +171,29 @@ function editSubjectName() {
     input.classList.add("form-control", "bg-white", "text-dark");
     document.getElementById("save-subject-name").classList.remove("d-none");
     document.getElementById("cancel-subject-name").classList.remove("d-none");
+    document.getElementById("btn-edit-title").classList.add("d-none");
+    input.focus();
 }
 
 function saveSubjectName() {
     const input = document.getElementById("subject-name");
+    const newName = input.value.trim();
+    if (!newName) return showInfo("Subject name cannot be empty.");
+
     fetch(window.location.href, {
         method: "POST",
-        headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-CSRFToken": csrf()
-        },
-        body: `update_subject_name=1&subject_name=${encodeURIComponent(input.value)}`
-    }).then(r => r.json()).then(d => {
-        if (d.status === "success") location.reload();
-        else showInfo("Update failed.");
-    });
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRFToken": csrf() },
+        body: `update_subject_name=1&subject_name=${encodeURIComponent(newName)}`
+    })
+    .then(r => r.json())
+    .then(d => {
+        if (d.status === "success") {
+            location.reload();
+        } else {
+            showInfo(d.message || "Update failed.");
+        }
+    })
+    .catch(() => showInfo("Update failed."));
 }
 
 function cancelSubjectNameEdit() {
@@ -180,8 +204,10 @@ function cancelSubjectNameEdit() {
     input.classList.remove("form-control", "bg-white", "text-dark");
     document.getElementById("save-subject-name").classList.add("d-none");
     document.getElementById("cancel-subject-name").classList.add("d-none");
+    document.getElementById("btn-edit-title").classList.remove("d-none");
 }
 
+/* ===== Description editing ===== */
 function editDescription() {
     const input = document.getElementById("subject-description");
     input.readOnly = false;
@@ -194,10 +220,7 @@ function saveDescription() {
     const input = document.getElementById("subject-description");
     fetch(window.location.href, {
         method: "POST",
-        headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-CSRFToken": csrf()
-        },
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRFToken": csrf() },
         body: `description=${encodeURIComponent(input.value)}`
     }).then(r => r.json()).then(d => {
         if (d.status === "success") location.reload();
@@ -212,14 +235,22 @@ function cancelEdit() {
     document.getElementById("cancel-description").classList.add("d-none");
 }
 
+/* ===== Category actions ===== */
+function navigateIfReadonly(id, name) {
+    const input = document.getElementById(`category-name-${id}`);
+    if (!input || input.readOnly === false) return;
+    if (name === "Assignments") {
+        window.location.href = "/assignments/{{ subject.id }}/";
+    } else {
+        window.location.href = `/subjects/category/${id}/`;
+    }
+}
+
 function confirmDeleteCategory(id) {
     showConfirm("Delete this category?", () => {
         fetch(window.location.href, {
             method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "X-CSRFToken": csrf()
-            },
+            headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRFToken": csrf() },
             body: `delete_category=1&category_id=${id}`
         }).then(() => location.reload());
     });
@@ -230,10 +261,7 @@ function addCategory() {
     if (!name) return showInfo("Category name cannot be empty.");
     fetch(window.location.href, {
         method: "POST",
-        headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-CSRFToken": csrf()
-        },
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRFToken": csrf() },
         body: `new_category=${encodeURIComponent(name)}`
     })
     .then(r => r.json())
@@ -248,15 +276,18 @@ function addCategory() {
 
 function editCategoryName(id) {
     const input = document.getElementById(`category-name-${id}`);
+    if (!input) return;
     input.readOnly = false;
     input.classList.remove("form-control-plaintext");
     input.classList.add("form-control", "bg-white");
+    input.focus();
     document.getElementById(`save-category-${id}`).classList.remove("d-none");
     document.getElementById(`cancel-category-${id}`).classList.remove("d-none");
 }
 
 function cancelCategoryEdit(id, originalName) {
     const input = document.getElementById(`category-name-${id}`);
+    if (!input) return;
     input.value = originalName;
     input.readOnly = true;
     input.classList.add("form-control-plaintext");
@@ -267,19 +298,18 @@ function cancelCategoryEdit(id, originalName) {
 
 function saveCategoryName(id) {
     const input = document.getElementById(`category-name-${id}`);
+    if (!input) return;
     const name = input.value.trim();
     if (!name) return showInfo("Name cannot be empty.");
+
     fetch(window.location.href, {
         method: "POST",
-        headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-CSRFToken": csrf()
-        },
+        headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRFToken": csrf() },
         body: `update_category=1&category_id=${id}&category_name=${encodeURIComponent(name)}`
     })
     .then(r => r.json())
     .then(d => {
-        if (d.status === "error" && d.message.includes("already exists")) {
+        if (d.status === "error" && d.message && d.message.includes("already exists")) {
             showInfo(d.message);
         } else {
             location.reload();

@@ -250,160 +250,145 @@
 </div>
 
 <script>
-    // Variables to store subcategory deletion data
-    let subcategoryToDeleteId = null;
-    let subcategoryToDeleteName = null;
+  // -- CSRF --
+  function csrfToken() { return '{{ csrf_token }}'; }
 
-    function csrfToken() {
-        return '{{ csrf_token }}';
-    }
+  // -- Info modal (single) --
+  function showInfo(msg) {
+    $('#infoModalMessage').text(msg);
+    $('#infoModal').modal('show');
+  }
 
-    function showDeleteSubcategoryModal(id, name) {
-        subcategoryToDeleteId = id;
-        subcategoryToDeleteName = name;
-        document.getElementById('subcategoryToDeleteName').textContent = name;
-        $('#deleteSubcategoryModal').modal('show');
-    }
+  // ===== Subcategory actions (AJAX JSON) =====
+  function showDeleteSubcategoryModal(id, name) {
+    window._delSubId = id;
+    $('#subcategoryToDeleteName').text(name);
+    $('#deleteSubcategoryModal').modal('show');
+  }
 
-    function confirmDeleteSubcategory() {
-        if (!subcategoryToDeleteId) return;
-        
-        fetch("", {
-            method: "POST",
-            headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-                "X-CSRFToken": csrfToken()
-            },
-            body: `delete_subcategory=1&subcategory_id=${subcategoryToDeleteId}`
-        }).then(() => {
-            $('#deleteSubcategoryModal').modal('hide');
-            location.reload();
-        });
-    }
-
-    function startEdit(id) {
-        // Hide the name and show the edit form
-        document.querySelector(`#subcategory-name-${id}`).closest('a').style.display = 'none';
-        document.querySelector(`#subcategory-name-${id}`).closest('.subcategory-name').querySelector('.edit-form').classList.remove('d-none');
-        document.querySelector(`#edit-subcategory-${id}`).focus();
-    }
-
-    function cancelSubcategoryRename(id) {
-        // Show the name and hide the edit form
-        document.querySelector(`#subcategory-name-${id}`).closest('a').style.display = '';
-        document.querySelector(`#subcategory-name-${id}`).closest('.subcategory-name').querySelector('.edit-form').classList.add('d-none');
-    }
-
-    function saveSubcategoryRename(id) {
-        const newName = document.querySelector(`#edit-subcategory-${id}`).value.trim();
-        
-        if (!newName) {
-            alert("Name cannot be empty.");
-            return;
-        }
-
-        const formData = new URLSearchParams();
-        formData.append("update_subcategory", "1");
-        formData.append("subcategory_id", id);
-        formData.append("subcategory_name", newName);
-        formData.append("csrfmiddlewaretoken", csrfToken());
-
-        fetch("", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: formData.toString()
-        }).then(res => {
-            if (res.redirected) {
-                window.location.href = res.url;
-            } else {
-                window.location.reload();
-            }
-        });
-    }
-
-    function showPreview(url, filename) {
-        const previewImage = document.getElementById('previewImage');
-        const previewIframe = document.getElementById('previewIframe');
-        const previewTitle = document.getElementById('previewModalLabel');
-        const downloadLink = document.getElementById('downloadLink');
-
-        previewImage.style.display = 'none';
-        previewIframe.style.display = 'none';
-
-        fetch(url, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
-            .then(response => {
-                const contentType = response.headers.get("Content-Type");
-                downloadLink.href = url;
-                downloadLink.setAttribute("download", filename);
-                previewTitle.innerText = "Preview: " + filename;
-
-                if (contentType.startsWith("image/")) {
-                    previewImage.src = url;
-                    previewImage.style.display = "block";
-                    $('#previewModal').modal('show');
-                } else if (contentType === "application/pdf") {
-                    previewIframe.src = url;
-                    previewIframe.style.display = "block";
-                    $('#previewModal').modal('show');
-                } else {
-                    $('#unsupportedModal').modal('show');
-                }
-            })
-            .catch(err => {
-                alert("Preview failed.");
-                console.error(err);
-            });
-    }
-    function showInfo(msg) {
-        $('#infoModalMessage').text(msg);
-        $('#infoModal').modal('show');
+  function confirmDeleteSubcategory() {
+    if (!window._delSubId) return;
+    fetch("", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-CSRFToken": csrfToken(),
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      body: `delete_subcategory=1&subcategory_id=${encodeURIComponent(window._delSubId)}`
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'success') {
+        location.reload();
+      } else {
+        showInfo(d.message || "Delete failed.");
       }
-      function addFolder() {
-        const name = document.getElementById('new-folder-name').value.trim();
-        if (!name) { showInfo("Folder name cannot be empty."); return; }
-    
-        fetch("", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-CSRFToken": csrfToken(),
-            "X-Requested-With": "XMLHttpRequest"
-          },
-          body: `new_subcategory=${encodeURIComponent(name)}`
-        })
-        .then(r => r.ok ? r.json() : r.json())
-        .then(data => {
-          if (data.status === 'error') {
-            showInfo(data.message || "A folder with this name already exists.");
-          } else {
-            location.reload();
-          }
-        })
-        .catch(() => showInfo("Something went wrong. Please try again."));
+    })
+    .catch(() => showInfo("Delete failed."));
+  }
+
+  function startEdit(id) {
+    // Hide link, show inline editor
+    const a = document.querySelector(`#subcategory-name-${id}`).closest('a');
+    a.style.display = 'none';
+    const edit = a.closest('.subcategory-name').querySelector('.edit-form');
+    edit.classList.remove('d-none');
+    edit.querySelector('input').focus();
+  }
+
+  function cancelSubcategoryRename(id) {
+    const a = document.querySelector(`#subcategory-name-${id}`).closest('a');
+    a.style.display = '';
+    const edit = a.closest('.subcategory-name').querySelector('.edit-form');
+    edit.classList.add('d-none');
+  }
+
+  function saveSubcategoryRename(id) {
+    const input = document.querySelector(`#edit-subcategory-${id}`);
+    const newName = (input.value || '').trim();
+    if (!newName) { showInfo("Folder name cannot be empty."); return; }
+
+    fetch("", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-CSRFToken": csrfToken(),
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      body: `update_subcategory=1&subcategory_id=${encodeURIComponent(id)}&subcategory_name=${encodeURIComponent(newName)}`
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'success') {
+        location.reload();
+      } else {
+        showInfo(d.message || "Rename failed.");
       }
-    
-      function saveSubcategoryRename(id) {
-        const newName = document.querySelector(`#edit-subcategory-${id}`).value.trim();
-        if (!newName) { showInfo("Folder name cannot be empty."); return; }
-    
-        fetch("", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/x-www-form-urlencoded",
-            "X-CSRFToken": csrfToken(),
-            "X-Requested-With": "XMLHttpRequest"
-          },
-          body: `update_subcategory=1&subcategory_id=${id}&subcategory_name=${encodeURIComponent(newName)}`
-        })
-        .then(r => r.ok ? r.json() : r.json())
-        .then(data => {
-          if (data.status === 'error') {
-            showInfo(data.message || "A folder with this name already exists.");
-          } else {
-            location.reload();
-          }
-        })
-        .catch(() => showInfo("Something went wrong. Please try again."));
+    })
+    .catch(() => showInfo("Rename failed."));
+  }
+
+  function addFolder() {
+    const name = (document.getElementById('new-folder-name').value || '').trim();
+    if (!name) { showInfo("Folder name cannot be empty."); return; }
+
+    fetch("", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-CSRFToken": csrfToken(),
+        "X-Requested-With": "XMLHttpRequest"
+      },
+      body: `new_subcategory=${encodeURIComponent(name)}`
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d.status === 'success') {
+        location.reload();
+      } else {
+        showInfo(d.message || "Could not add folder.");
       }
+    })
+    .catch(() => showInfo("Could not add folder."));
+  }
+
+  // ===== Preview (robust) =====
+  // We don't need to fetch first; just choose viewer by extension.
+  function showPreview(url, filename) {
+    const lower = (filename || '').toLowerCase();
+    const isImg = /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(lower);
+    const isPdf = /\.pdf$/.test(lower);
+
+    const previewImage = document.getElementById('previewImage');
+    const previewIframe = document.getElementById('previewIframe');
+    const title = document.getElementById('previewModalLabel');
+    const downloadLink = document.getElementById('downloadLink');
+
+    previewImage.style.display = 'none';
+    previewIframe.style.display = 'none';
+    title.innerText = "Preview: " + (filename || '');
+
+    downloadLink.href = url;
+    downloadLink.setAttribute('download', filename || '');
+
+    if (isImg) {
+      previewImage.src = url;
+      previewImage.style.display = 'block';
+      $('#previewModal').modal('show');
+    } else if (isPdf) {
+      previewIframe.src = url;
+      previewIframe.style.display = 'block';
+      $('#previewModal').modal('show');
+    } else {
+      $('#unsupportedModal').modal('show');
+    }
+  }
+
+  // ===== File download (unchanged, but safer) =====
+  function safeDownload(url) {
+    window.location.href = url;
+  }
 </script>
+
 {% endblock %}

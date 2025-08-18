@@ -18,13 +18,16 @@
         </ol>
     </nav>
 
+    <div class="card shadow-sm no-hover-card">
         <div class="card-header bg-primary text-white">
             <h4 class="mb-0 text-center">Create Subject</h4>
         </div>
+
         <div class="card-body">
             <!-- Form -->
             <form method="post" onsubmit="handleSubmit(event)">
                 {% csrf_token %}
+
                 <div class="form-group">
                     <label for="id_name">Subject Name</label>
                     {{ form.name|add_class:"form-control" }}
@@ -37,40 +40,36 @@
 
                 <div class="form-group">
                     <label>Categories</label>
+
+                    <!-- Category list -->
                     <div id="category-list">
+                        <!-- Defaults: badge + NO delete -->
                         <div class="input-group mb-3">
                             <input type="text" name="categories" class="form-control" value="Courses" readonly>
-                            <div class="input-group-append">
-                                <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
-                                    <i class="fas fa-trash-alt"></i>
-                                </button>
+                            <div class="input-group-append align-items-center">
+                                <span class="input-group-text bg-light text-muted">Default</span>
                             </div>
                         </div>
                         <div class="input-group mb-3">
                             <input type="text" name="categories" class="form-control" value="Assignments" readonly>
-                            <div class="input-group-append">
-                                <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
-                                    <i class="fas fa-trash-alt"></i>
-                                </button>
+                            <div class="input-group-append align-items-center">
+                                <span class="input-group-text bg-light text-muted">Default</span>
                             </div>
                         </div>
                         <div class="input-group mb-3">
                             <input type="text" name="categories" class="form-control" value="Tests" readonly>
-                            <div class="input-group-append">
-                                <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
-                                    <i class="fas fa-trash-alt"></i>
-                                </button>
+                            <div class="input-group-append align-items-center">
+                                <span class="input-group-text bg-light text-muted">Default</span>
                             </div>
                         </div>
                         <div class="input-group mb-3">
                             <input type="text" name="categories" class="form-control" value="Other" readonly>
-                            <div class="input-group-append">
-                                <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
-                                    <i class="fas fa-trash-alt"></i>
-                                </button>
+                            <div class="input-group-append align-items-center">
+                                <span class="input-group-text bg-light text-muted">Default</span>
                             </div>
                         </div>
                     </div>
+
                     <button type="button" class="btn btn-outline-primary" onclick="addCategory()">
                         <i class="fas fa-plus"></i> Add Category
                     </button>
@@ -82,15 +81,43 @@
                 </div>
             </form>
         </div>
+    </div>
 </div>
 
-<!-- JavaScript for Dynamic Category Management -->
+<!-- Error Modal (auto-opens if messages or form errors exist) -->
+{% if messages or form.errors %}
+<div class="modal fade" id="errorModal" tabindex="-1" role="dialog" aria-labelledby="errorModalLabel" aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title" id="errorModalLabel">Cannot create subject</h5>
+        <button type="button" class="close text-white" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        {% if messages %}
+          {% for m in messages %}
+            <div>{{ m }}</div>
+          {% endfor %}
+        {% endif %}
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <script>
+    const DEFAULTS = ["courses","assignments","tests","other"];
+
     function addCategory() {
         const categoryList = document.getElementById('category-list');
-        const newCategory = document.createElement('div');
-        newCategory.className = 'input-group mb-3';
-        newCategory.innerHTML = `
+        const wrap = document.createElement('div');
+        wrap.className = 'input-group mb-3';
+        wrap.innerHTML = `
             <input type="text" class="form-control" placeholder="New Category">
             <div class="input-group-append">
                 <button class="btn btn-outline-success" type="button" onclick="saveCategory(this)">
@@ -101,31 +128,77 @@
                 </button>
             </div>
         `;
-        categoryList.appendChild(newCategory);
+        categoryList.appendChild(wrap);
     }
 
-    function removeCategory(button) {
-        const category = button.closest('.input-group');
-        category.remove();
+    function removeCategory(btn) {
+        const row = btn.closest('.input-group');
+        row.remove();
     }
 
-    function saveCategory(button) {
-        const categoryInput = button.closest('.input-group').querySelector('input');
-        if (categoryInput.value.trim() === '') {
+    function currentNamesLower() {
+        return Array.from(document.querySelectorAll('#category-list input'))
+            .map(i => (i.value || '').trim().toLowerCase())
+            .filter(v => v.length > 0);
+    }
+
+    function saveCategory(btn) {
+        const row = btn.closest('.input-group');
+        const input = row.querySelector('input');
+        const raw = (input.value || '').trim();
+        const nameLower = raw.toLowerCase();
+
+        if (!raw) {
             alert('Category name cannot be empty.');
             return;
         }
-        categoryInput.setAttribute('readonly', true);
-        categoryInput.name = 'categories';
-        button.closest('.input-group-append').remove();
+        // block defaults or duplicates
+        if (DEFAULTS.includes(nameLower)) {
+            alert('This name is reserved as a default folder.');
+            return;
+        }
+        const existing = currentNamesLower();
+        // When saving, the current input is already in the list; count occurrences
+        const occurrences = existing.filter(v => v === nameLower).length;
+        if (occurrences > 1) {
+            alert('A folder with this name already exists.');
+            return;
+        }
+
+        // lock & convert to saved custom row: readonly + delete button
+        input.value = raw;
+        input.readOnly = true;
+        input.name = 'categories';
+
+        const append = row.querySelector('.input-group-append');
+        append.innerHTML = `
+            <button class="btn btn-outline-danger" type="button" onclick="removeCategory(this)">
+                <i class="fas fa-trash-alt"></i>
+            </button>
+        `;
     }
 
     function handleSubmit(event) {
-        const categoryInputs = document.querySelectorAll('input[name="categories"]');
-        if (categoryInputs.length === 0) {
+        const inputs = Array.from(document.querySelectorAll('input[name="categories"]'));
+        if (inputs.length === 0) {
             alert('Please add at least one category.');
             event.preventDefault();
+            return;
+        }
+        // Final duplicate check (case-insensitive)
+        const names = inputs.map(i => (i.value || '').trim().toLowerCase());
+        const hasDup = names.some((n, i) => names.indexOf(n) !== i);
+        if (hasDup) {
+            alert('Duplicate folder names detected. Please make them unique.');
+            event.preventDefault();
+            return;
         }
     }
+
+    document.addEventListener('DOMContentLoaded', function () {
+        {% if messages or form.errors %}
+            $('#errorModal').modal('show');
+        {% endif %}
+    });
 </script>
 {% endblock %}

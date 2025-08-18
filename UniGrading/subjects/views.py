@@ -32,15 +32,25 @@ class MySubjectsView(LoginRequiredMixin, BreadcrumbMixin, ListView):
 
     def get_breadcrumbs(self):
         dashboard_url = reverse_lazy("users:login")
-        if self.request.user.role == "professor":
+        if getattr(self.request.user, "role", None) == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
-        elif self.request.user.role == "student":
+        elif getattr(self.request.user, "role", None) == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
 
         return [
             ("Dashboard", dashboard_url),
             ("My Subjects", reverse_lazy("subjects:my_subjects")),
         ]
+
+    def get_queryset(self):
+        """
+        Professors: show their own subjects first (adjust if you want strict filtering)
+        Students / others: default ordering
+        """
+        qs = Subject.objects.select_related("professor").order_by("name")
+        if getattr(self.request.user, "role", None) == "professor":
+            return qs.filter(professor=self.request.user)
+        return qs
 
 # --------------------------
 # Create Subject View
@@ -53,9 +63,9 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         dashboard_url = reverse_lazy("users:login")
-        if self.request.user.role == "professor":
+        if getattr(self.request.user, "role", None) == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
-        elif self.request.user.role == "student":
+        elif getattr(self.request.user, "role", None) == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
 
         context['breadcrumbs'] = [
@@ -66,10 +76,24 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
         return context
 
     def form_valid(self, form):
+        """
+        Prevent duplicate subject per professor (case-insensitive) on create.
+        If duplicate, render the same page with an error message so the modal can show.
+        """
         subject = form.save(commit=False)
         subject.professor = self.request.user
+        name = (subject.name or "").strip()
+
+        # Duplicate check scoped to professor
+        if Subject.objects.filter(professor=self.request.user, name__iexact=name).exists():
+            from django.contrib import messages
+            messages.error(self.request, "A subject with this name already exists.")
+            # Re-render the form page (no redirect), so template JS can pop the modal
+            form.add_error("name", "Duplicate name for your account.")
+            return self.render_to_response(self.get_context_data(form=form))
 
         with transaction.atomic():
+            subject.name = name
             subject.save()
 
             # Default categories
@@ -77,10 +101,10 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
             for category_name in default_categories:
                 Category.objects.get_or_create(subject=subject, name=category_name, parent=None)
 
-            # Additional categories from POST request
+            # Additional categories from POST
             additional_categories = self.request.POST.getlist('categories')
             for category_name in additional_categories:
-                category_name = category_name.strip()
+                category_name = (category_name or "").strip()
                 if category_name:
                     Category.objects.get_or_create(subject=subject, name=category_name, parent=None)
 
@@ -98,9 +122,9 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     context_object_name = "subject"
 
     def get_breadcrumbs(self):
-        if self.request.user.role == "professor":
+        if getattr(self.request.user, "role", None) == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
-        elif self.request.user.role == "student":
+        elif getattr(self.request.user, "role", None) == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
         else:
             dashboard_url = reverse_lazy("users:login")
@@ -122,6 +146,25 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
         subject = self.get_object()
         data = request.POST
         protected_categories = ["Courses", "Assignments", "Tests", "Other"]
+        
+          # === Update subject name (title) ===
+        if "update_subject_name" in data:
+            new_name = (data.get("subject_name") or "").strip()
+            if not new_name:
+                return JsonResponse({"status": "error", "message": "Subject name cannot be empty."}, status=400)
+
+            if Subject.objects.filter(
+                professor=subject.professor,
+                name__iexact=new_name
+            ).exclude(pk=subject.pk).exists():
+                return JsonResponse(
+                    {"status": "error", "message": "A subject with this name already exists."},
+                    status=409,
+                )
+
+            subject.name = new_name
+            subject.save(update_fields=["name"])
+            return JsonResponse({"status": "success", "message": "Subject name updated!"})
 
         # === Update subject description ===
         if "description" in data:
@@ -157,30 +200,68 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             category.delete()
             return JsonResponse({"status": "success", "message": "Category deleted!"})
 
-        # === Update subject name ===
+        # === Update category name ===
         elif "update_category" in data:
-                    category_id = data.get("category_id")
-                    new_name = data.get("category_name", "").strip()
+            category_id = data.get("category_id")
+            new_name = data.get("category_name", "").strip()
 
-                    if not new_name:
-                        return JsonResponse({"status": "error", "message": "Name cannot be empty."})
+            if not new_name:
+                return JsonResponse({"status": "error", "message": "Name cannot be empty."})
 
-                    try:
-                        category = Category.objects.get(id=category_id, subject=subject)
+            try:
+                category = Category.objects.get(id=category_id, subject=subject)
 
-                        if category.parent is None and category.name in protected_categories:
-                            return JsonResponse({"status": "error", "message": "This category cannot be renamed."})
+                if category.parent is None and category.name in protected_categories:
+                    return JsonResponse({"status": "error", "message": "This category cannot be renamed."})
 
-                        if Category.objects.filter(subject=subject, name=new_name, parent=None).exclude(id=category.id).exists():
-                            return JsonResponse({"status": "error", "message": "A category with this name already exists."})
+                if Category.objects.filter(subject=subject, name=new_name, parent=None).exclude(id=category.id).exists():
+                    return JsonResponse({"status": "error", "message": "A category with this name already exists."})
 
-                        category.name = new_name
-                        category.save()
-                        return JsonResponse({"status": "success", "message": "Category name updated!"})
-                    except Category.DoesNotExist:
-                        return JsonResponse({"status": "error", "message": "Category not found."})
+                category.name = new_name
+                category.save()
+                return JsonResponse({"status": "success", "message": "Category name updated!"})
+            except Category.DoesNotExist:
+                return JsonResponse({"status": "error", "message": "Category not found."})
 
         return redirect(self.request.path)
+
+# --------------------------
+# Rename Subject (Function-Based View, AJAX)
+# --------------------------
+@login_required
+@require_POST
+def rename_subject(request, pk):
+    """
+    Rename a subject with per-professor duplicate prevention (case-insensitive).
+    Returns JSON. 409 on duplicate.
+    """
+    subject = get_object_or_404(Subject, pk=pk)
+
+    # Only the owning professor can rename (adjust if your auth rules differ)
+    if subject.professor != request.user:
+        return JsonResponse({"ok": False, "message": "Not allowed."}, status=403)
+
+    new_name = (request.POST.get("name") or "").strip()
+    if not new_name:
+        return JsonResponse({"ok": False, "message": "Name cannot be empty."}, status=400)
+
+    # If unchanged (case-insensitive), accept
+    if subject.name.strip().casefold() == new_name.casefold():
+        return JsonResponse({"ok": True, "id": subject.id, "name": subject.name})
+
+    # Duplicate check per professor (exclude self)
+    if Subject.objects.filter(
+        professor=request.user,
+        name__iexact=new_name
+    ).exclude(pk=subject.id).exists():
+        return JsonResponse(
+            {"ok": False, "reason": "duplicate", "message": "A subject with this name already exists."},
+            status=409
+        )
+
+    subject.name = new_name
+    subject.save(update_fields=["name"])
+    return JsonResponse({"ok": True, "id": subject.id, "name": subject.name})
 
 # --------------------------
 # Category Detail View
@@ -195,9 +276,9 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
         category = self.get_object()
 
         # Get correct dashboard based on role
-        if self.request.user.role == "professor":
+        if getattr(self.request.user, "role", None) == "professor":
             dashboard_url = reverse_lazy("users:professor_dashboard")
-        elif self.request.user.role == "student":
+        elif getattr(self.request.user, "role", None) == "student":
             dashboard_url = reverse_lazy("users:student_dashboard")
         else:
             dashboard_url = reverse_lazy("users:login")
@@ -258,38 +339,86 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
         category = self.get_object()
         data = request.POST
 
-        if "new_subcategory" in data:
-            subcategory_name = data.get("new_subcategory", "").strip()
-            if subcategory_name:
-                # check if subcategory already exists under same parent
-                if Category.objects.filter(subject=category.subject, parent=category, name=subcategory_name).exists():
-                    messages.error(request, "A subcategory with this name already exists.")
-                else:
-                    Category.objects.create(subject=category.subject, name=subcategory_name, parent=category)
-                    messages.success(request, "Subcategory added successfully!")
+        # Helpers
+        def jerr(msg, code=400):
+            return JsonResponse({"status": "error", "message": msg}, status=code)
 
-        elif "new_file" in request.POST:
+        def jok(payload=None):
+            base = {"status": "success"}
+            if payload:
+                base.update(payload)
+            return JsonResponse(base)
+
+        # Create subfolder (AJAX)
+        if "new_subcategory" in data:
+            name = (data.get("new_subcategory") or "").strip()
+            if not name:
+                return jerr("Folder name cannot be empty.")
+            # case-insensitive uniqueness under *this* parent
+            if Category.objects.filter(
+                subject=category.subject, parent=category, name__iexact=name
+            ).exists():
+                return jerr("A folder with this name already exists.", code=409)
+
+            sub = Category.objects.create(subject=category.subject, parent=category, name=name)
+            return jok({"id": sub.id, "name": sub.name})
+
+        # Rename subfolder (AJAX)
+        if "update_subcategory" in data:
+            sub_id = data.get("subcategory_id")
+            new_name = (data.get("subcategory_name") or "").strip()
+            if not new_name:
+                return jerr("Folder name cannot be empty.")
+
+            try:
+                sub = Category.objects.get(id=sub_id, parent=category)
+            except Category.DoesNotExist:
+                return jerr("Folder not found.", code=404)
+
+            # case-insensitive uniqueness under *this* parent, excluding self
+            if Category.objects.filter(
+                subject=category.subject, parent=category, name__iexact=new_name
+            ).exclude(id=sub.id).exists():
+                return jerr("A folder with this name already exists.", code=409)
+
+            sub.name = new_name
+            sub.save(update_fields=["name"])
+            return jok({"id": sub.id, "name": sub.name})
+
+        # Delete subfolder (AJAX)
+        if "delete_subcategory" in data:
+            sub_id = data.get("subcategory_id")
+            try:
+                sub = Category.objects.get(id=sub_id, parent=category)
+            except Category.DoesNotExist:
+                return jerr("Folder not found.", code=404)
+
+            if sub.files.exists() or sub.subcategories.exists():
+                return jerr("Cannot delete a non-empty folder.", code=409)
+
+            sub.delete()
+            return jok()
+
+        # Upload file (non-AJAX form post)
+        if "new_file" in request.POST:
             if "file" not in request.FILES:
                 messages.error(request, "No file provided.")
                 return redirect(self.request.path)
-
             uploaded_file = request.FILES["file"]
             try:
-                File.objects.create(category=category, name=uploaded_file.name, file=uploaded_file, uploaded_by=request.user)
+                File.objects.create(
+                    category=category,
+                    name=uploaded_file.name,
+                    file=uploaded_file,
+                    uploaded_by=request.user,
+                )
                 messages.success(request, "File uploaded successfully!")
             except Exception as e:
                 messages.error(request, f"Upload failed: {str(e)}")
+            return redirect(self.request.path)
 
-        elif "delete_subcategory" in data:
-            subcategory_id = data.get("subcategory_id")
-            subcategory = get_object_or_404(Category, id=subcategory_id, parent=category)
-            try:
-                subcategory.delete()
-                messages.success(request, "Subcategory deleted successfully!")
-            except Exception as e:
-                messages.error(request, f"Failed to delete subcategory: {str(e)}")
-
-        elif "delete_file" in data:
+        # Delete file (non-AJAX form post)
+        if "delete_file" in data:
             file_id = data.get("file_id")
             file = get_object_or_404(File, id=file_id, category=category)
             try:
@@ -297,28 +426,11 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
                 messages.success(request, "File deleted successfully!")
             except Exception as e:
                 messages.error(request, f"Failed to delete file: {str(e)}")
+            return redirect(self.request.path)
 
-        elif "update_subcategory" in data:
-            subcategory_id = data.get("subcategory_id")
-            new_name = data.get("subcategory_name", "").strip()
-
-            if not new_name:
-                messages.error(request, "Name cannot be empty.")
-                return redirect(self.request.path)
-
-            try:
-                subcategory = Category.objects.get(id=subcategory_id, parent=category)
-
-                if Category.objects.filter(subject=category.subject, parent=category, name=new_name).exclude(id=subcategory.id).exists():
-                    messages.error(request, "A subcategory with this name already exists.")
-                else:
-                    subcategory.name = new_name
-                    subcategory.save()
-                    messages.success(request, "Folder renamed successfully!")
-            except Category.DoesNotExist:
-                messages.error(request, "Folder not found.")
-
+        # Fallback
         return redirect(self.request.path)
+
 
 # --------------------------
 # Delete Subject (Function-Based View)
