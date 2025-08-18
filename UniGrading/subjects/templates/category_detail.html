@@ -125,15 +125,24 @@
                         </div>
                     </div>
 
-                    <!-- Upload File -->
-                    <div class="input-group mb-3">
-                        <input type="file" id="file-input" class="form-control-file">
+                    <!-- Upload File (plain form post to match views.py) -->
+                    <form method="post" enctype="multipart/form-data" class="input-group mb-3">
+                        {% csrf_token %}
+                        <input type="hidden" name="new_file" value="1">
+                        <input type="file" name="file" id="file-input" class="form-control-file">
                         <div class="input-group-append">
-                            <button class="btn btn-outline-primary" type="button" onclick="addFile()">
+                            <button class="btn btn-outline-primary" type="submit">
                                 <i class="fas fa-upload"></i> Upload File
                             </button>
                         </div>
-                    </div>
+                    </form>
+
+                    <!-- Hidden form used by deleteFile() JS -->
+                    <form id="delete-file-form" method="post" style="display:none;">
+                        {% csrf_token %}
+                        <input type="hidden" name="delete_file" value="1">
+                        <input type="hidden" name="file_id" id="delete-file-id">
+                    </form>
                 </div>
             </div>
         </div>
@@ -160,24 +169,6 @@
   </div>
 </div>
 
-<!-- Download Error Modal -->
-<div class="modal fade" id="downloadErrorModal" tabindex="-1" role="dialog" aria-hidden="true">
-  <div class="modal-dialog" role="document">
-    <div class="modal-content border-danger">
-      <div class="modal-header bg-danger text-white">
-        <h5 class="modal-title">Download Failed</h5>
-        <button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
-      </div>
-      <div class="modal-body" id="downloadErrorMessage">
-        The file you're trying to download does not exist anymore.
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-danger" data-dismiss="modal">OK</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- Delete Confirmation Modal -->
 <div class="modal fade" id="deleteSubcategoryModal" tabindex="-1" role="dialog" aria-hidden="true">
   <div class="modal-dialog" role="document">
@@ -197,40 +188,22 @@
   </div>
 </div>
 
-<!-- Info Modal for duplicate subcategory -->
+<!-- Single Info Modal (reused everywhere) -->
 <div class="modal fade" id="infoModal" tabindex="-1" role="dialog" aria-hidden="true">
-    <div class="modal-dialog" role="document">
-      <div class="modal-content border-warning">
-        <div class="modal-header bg-warning text-white">
-          <h5 class="modal-title">Duplicate Name</h5>
-          <button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
-        </div>
-        <div class="modal-body">
-          A folder with this name already exists.
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-warning" data-dismiss="modal">OK</button>
-        </div>
+  <div class="modal-dialog" role="document">
+    <div class="modal-content border-warning">
+      <div class="modal-header bg-warning text-white">
+        <h5 class="modal-title">Warning</h5>
+        <button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
+      </div>
+      <div class="modal-body" id="infoModalMessage">Message</div>
+      <div class="modal-footer">
+        <button class="btn btn-warning" data-dismiss="modal">OK</button>
       </div>
     </div>
   </div>
-  <!-- Info Modal -->
-<div class="modal fade" id="infoModal" tabindex="-1" role="dialog" aria-hidden="true">
-    <div class="modal-dialog" role="document">
-      <div class="modal-content border-warning">
-        <div class="modal-header bg-warning text-white">
-          <h5 class="modal-title">Warning</h5>
-          <button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
-        </div>
-        <div class="modal-body" id="infoModalMessage">
-          <!-- message injected by JS -->
-        </div>
-        <div class="modal-footer">
-          <button class="btn btn-warning" data-dismiss="modal">OK</button>
-        </div>
-      </div>
-    </div>
-  </div>
+</div>
+
 <!-- Unsupported File Modal -->
 <div class="modal fade" id="unsupportedModal" tabindex="-1" role="dialog" aria-hidden="true">
   <div class="modal-dialog" role="document">
@@ -353,8 +326,7 @@
     .catch(() => showInfo("Could not add folder."));
   }
 
-  // ===== Preview (robust) =====
-  // We don't need to fetch first; just choose viewer by extension.
+  // ===== Preview (image/PDF) =====
   function showPreview(url, filename) {
     const lower = (filename || '').toLowerCase();
     const isImg = /\.(png|jpe?g|gif|webp|bmp|svg)$/.test(lower);
@@ -385,9 +357,16 @@
     }
   }
 
-  // ===== File download (unchanged, but safer) =====
+  // ===== File helpers =====
   function safeDownload(url) {
     window.location.href = url;
+  }
+
+  function deleteFile(id, name) {
+    if (!confirm(`Delete file "${name}"?`)) return;
+    const form = document.getElementById('delete-file-form');
+    document.getElementById('delete-file-id').value = id;
+    form.submit(); 
   }
 </script>
 

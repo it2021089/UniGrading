@@ -399,11 +399,16 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             sub.delete()
             return jok()
 
-        # Upload file (non-AJAX form post)
-        if "new_file" in request.POST:
+                # Upload file (supports AJAX FormData and normal form submission)
+        if "new_file" in request.POST or (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest" and "file" in request.FILES
+        ):
             if "file" not in request.FILES:
+                if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                    return JsonResponse({"status": "error", "message": "No file provided."}, status=400)
                 messages.error(request, "No file provided.")
                 return redirect(self.request.path)
+
             uploaded_file = request.FILES["file"]
             try:
                 File.objects.create(
@@ -412,11 +417,14 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
                     file=uploaded_file,
                     uploaded_by=request.user,
                 )
+                if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                    return JsonResponse({"status": "success"})
                 messages.success(request, "File uploaded successfully!")
             except Exception as e:
+                if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                    return JsonResponse({"status": "error", "message": f"Upload failed: {str(e)}"}, status=500)
                 messages.error(request, f"Upload failed: {str(e)}")
             return redirect(self.request.path)
-
         # Delete file (non-AJAX form post)
         if "delete_file" in data:
             file_id = data.get("file_id")
