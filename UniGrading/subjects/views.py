@@ -71,6 +71,7 @@ def browse_subjects(request):
     List subjects the user can enroll in:
     - Filtered to same institution if available.
     - Excludes subjects already enrolled in.
+    - If the user is a professor, also exclude their own subjects.
     """
     user = request.user
     institution = getattr(user, "institution", None)
@@ -79,10 +80,15 @@ def browse_subjects(request):
     if institution:
         qs = qs.filter(professor__institution=institution)
 
+    # Exclude subjects the user is already enrolled in
     qs = qs.exclude(enrollments__user=user)
 
+    # Professors shouldn't see their own subjects in Browse
+    if getattr(user, "role", None) == "professor":
+        qs = qs.exclude(professor=user)
+
     breadcrumbs = [
-        ("Dashboard", DASHBOARD_URL),
+        ("Dashboard", reverse_lazy("users:dashboard")),
         ("My Subjects", reverse_lazy("subjects:my_subjects")),
         ("Browse Subjects", ""),
     ]
@@ -91,13 +97,20 @@ def browse_subjects(request):
         "breadcrumbs": breadcrumbs,
     })
 
+
 @login_required
 @require_POST
 def enroll_subject(request, pk):
     subject = get_object_or_404(Subject, pk=pk)
+
+    if getattr(request.user, "role", None) == "professor" and subject.professor_id == request.user.id:
+        messages.info(request, "You can't enroll in your own subject.")
+        return redirect("subjects:browse_subjects")
+
     Enrollment.objects.get_or_create(user=request.user, subject=subject)
     messages.success(request, f"You enrolled in {subject.name}.")
     return redirect("subjects:my_subjects")
+
 
 # --------------------------
 # Create Subject View
