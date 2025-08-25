@@ -24,4 +24,6 @@ urlpatterns = [
     path('', include(('users.urls', 'users'), namespace='users')),  # Users app namespace
     path('subjects/', include(('subjects.urls', 'subjects'), namespace='subjects')),  # Subjects app namespace
     path('assignments/', include(('assignments.urls', 'assignments'), namespace='assignments')),  # Assignments app namespace
+    path('tests/', include(('tests.urls', 'tests'), namespace='tests')), # Tests app namespace
+
 ]

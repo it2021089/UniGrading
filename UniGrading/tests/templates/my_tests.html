@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load view_breadcrumbs %}
+
+{% block title %}Tests{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      {% for name, url in breadcrumbs %}
+        <li class="breadcrumb-item"><a href="{{ url }}">{{ name }}</a></li>
+      {% endfor %}
+    </ol>
+  </nav>
+
+  <div class="d-flex justify-content-between mb-3">
+    <h3>Tests for {{ subject.name }}</h3>
+    <a href="{% url 'tests:create_test' subject.id %}" class="btn btn-primary">
+      <i class="fas fa-plus"></i> Create Test
+    </a>
+  </div>
+
+  {% if tests %}
+    <div class="list-group">
+      {% for t in tests %}
+        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+           href="{% url 'tests:edit_test' subject.id t.id %}">
+          <div>
+            <strong>{{ t.name }}</strong>
+            <div class="small text-muted">Duration: {{ t.duration_minutes }} min · {{ t.created_at|date:"Y-m-d H:i" }}</div>
+          </div>
+          <i class="fas fa-chevron-right"></i>
+        </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="text-muted">No tests yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

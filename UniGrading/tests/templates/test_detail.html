@@ -1,0 +1,155 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load view_breadcrumbs %}
+
+{% block title %}{{ test.name|default:"Create Test" }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      {% for name, url in breadcrumbs %}
+        <li class="breadcrumb-item"><a href="{{ url }}">{{ name }}</a></li>
+      {% endfor %}
+    </ol>
+  </nav>
+
+  <div class="card shadow-sm no-hover-card">
+    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+      <h4 class="mb-0">{{ test.name|default:"Create Test" }}</h4>
+      <div>
+        <a href="{% url 'tests:my_tests' subject.id %}" class="btn btn-sm btn-outline-light">Back to Tests</a>
+      </div>
+    </div>
+
+    <div class="card-body">
+      <form method="post" id="testForm" action="">
+        {% csrf_token %}
+        <div class="form-row">
+          <div class="form-group col-md-8">
+            <label for="{{ form.name.id_for_label }}">Name</label>
+            {{ form.name }}
+          </div>
+          <div class="form-group col-md-4">
+            <label for="{{ form.duration_minutes.id_for_label }}">Time (minutes)</label>
+            {{ form.duration_minutes }}
+          </div>
+        </div>
+
+        <hr>
+        <div class="d-flex justify-content-between align-items-center mb-2">
+          <h5 class="mb-0">Questions</h5>
+          <button type="button" class="btn btn-outline-primary" onclick="addQuestion()">
+            <i class="fas fa-plus"></i> Add Question
+          </button>
+        </div>
+
+        <div id="questions"></div>
+
+        <div class="text-right mt-4">
+          <a href="{% url 'tests:my_tests' subject.id %}" class="btn btn-secondary mr-2">Cancel</a>
+          <button type="submit" class="btn btn-success">Save Test</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  let qIndex = 0;
+
+  function addQuestion(prefill) {
+    const idx = qIndex++;
+    const wrap = document.createElement('div');
+    wrap.className = 'border rounded p-3 mb-3';
+    wrap.innerHTML = `
+      <div class="d-flex justify-content-between align-items-start">
+        <label class="mb-2 w-100">Question
+          <textarea class="form-control mt-1" name="questions-${idx}-text" rows="2" required></textarea>
+        </label>
+        <button type="button" class="btn btn-sm btn-outline-danger ml-3" onclick="this.closest('.border').remove()">
+          <i class="fas fa-trash-alt"></i>
+        </button>
+      </div>
+      <div class="ml-1">
+        <div class="small text-muted mb-2">Choices (select the correct one)</div>
+        <div id="choices-${idx}"></div>
+        <button type="button" class="btn btn-sm btn-outline-secondary mt-2" onclick="addChoice(${idx})">
+          <i class="fas fa-plus"></i> Add Choice
+        </button>
+      </div>
+      <input type="hidden" name="questions-${idx}-correct" id="q-${idx}-correct">
+    `;
+    document.getElementById('questions').appendChild(wrap);
+
+    // default two choices
+    addChoice(idx);
+    addChoice(idx);
+
+    // prefill when editing
+    if (prefill) {
+      wrap.querySelector(`[name="questions-${idx}-text"]`).value = prefill.text || "";
+      const choicesContainer = wrap.querySelector(`#choices-${idx}`);
+      choicesContainer.innerHTML = '';
+      let cj = 0;
+      (prefill.choices || []).forEach((c) => {
+        addChoice(idx, c.text || "", c.is_correct, cj++);
+      });
+      if (cj === 0) { addChoice(idx); addChoice(idx); }
+    }
+  }
+
+  function addChoice(qi, presetText="", presetCorrect=false, forceIndex=null) {
+    const choicesWrap = document.getElementById(`choices-${qi}`);
+    const nextIndex = (forceIndex !== null) ? forceIndex : choicesWrap.children.length;
+
+    const row = document.createElement('div');
+    row.className = 'input-group mb-2';
+    row.innerHTML = `
+      <div class="input-group-prepend">
+        <div class="input-group-text">
+          <input type="radio" name="q-${qi}-correct-radio" ${presetCorrect ? 'checked' : ''} 
+                 onchange="document.getElementById('q-${qi}-correct').value='${nextIndex}'">
+        </div>
+      </div>
+      <input type="text" class="form-control" name="questions-${qi}-choice-${nextIndex}-text" placeholder="Choice text" required>
+      <div class="input-group-append">
+        <button type="button" class="btn btn-outline-danger" onclick="this.closest('.input-group').remove(); renumberChoices(${qi});">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+    `;
+    choicesWrap.appendChild(row);
+
+    if (presetText) row.querySelector('input.form-control').value = presetText;
+    if (presetCorrect) document.getElementById(`q-${qi}-correct`).value = String(nextIndex);
+  }
+
+  function renumberChoices(qi) {
+    const choicesWrap = document.getElementById(`choices-${qi}`);
+    const radios = choicesWrap.querySelectorAll('input[type=radio]');
+    const texts  = choicesWrap.querySelectorAll('input.form-control');
+
+    radios.forEach((r, i) => {
+      r.setAttribute('onchange', `document.getElementById('q-${qi}-correct').value='${i}'`);
+    });
+    texts.forEach((t, i) => {
+      t.name = `questions-${qi}-choice-${i}-text`;
+    });
+
+    const selected = choicesWrap.querySelector('input[type=radio]:checked');
+    if (selected) {
+      const newIndex = Array.from(radios).indexOf(selected);
+      document.getElementById(`q-${qi}-correct`).value = String(newIndex);
+    } else {
+      document.getElementById(`q-${qi}-correct`).value = '';
+    }
+  }
+
+  // Prefill existing content (pass `existing` from view as JSON-safe list)
+  {% if existing_json %}
+      const existing = {{ existing_json|safe }};
+      existing.forEach(q => addQuestion(q));
+  {% endif %}
+</script>
+{% endblock %}
