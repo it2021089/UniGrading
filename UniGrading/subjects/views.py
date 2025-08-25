@@ -1,3 +1,4 @@
+# subjects/views.py
 from django.shortcuts import render, get_object_or_404, redirect
 from django.http import Http404, JsonResponse, FileResponse, HttpResponse
 from django.contrib.auth.decorators import login_required
@@ -5,15 +6,16 @@ from django.views.generic import DetailView, ListView, CreateView
 from django.contrib.auth.mixins import LoginRequiredMixin
 from django.views.decorators.http import require_POST, require_GET
 from django.urls import reverse_lazy
-from .models import Subject, Category, File
-from .forms import SubjectForm
-from UniGrading.mixin import BreadcrumbMixin
 from django.db import transaction
 from django.contrib import messages
+from django.views.decorators.clickjacking import xframe_options_exempt
 import mimetypes
 import logging
 from botocore.exceptions import ClientError
-from django.views.decorators.clickjacking import xframe_options_exempt
+
+from .models import Subject, Category, File, Enrollment   # <-- Enrollment added
+from .forms import SubjectForm
+from UniGrading.mixin import BreadcrumbMixin
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -37,13 +39,65 @@ class MySubjectsView(LoginRequiredMixin, BreadcrumbMixin, ListView):
 
     def get_queryset(self):
         """
-        Professors: show their own subjects first (adjust if you want strict filtering)
-        Students / others: default ordering
+        Professors: only their own subjects.
+        Students: only subjects they are enrolled in.
         """
         qs = Subject.objects.select_related("professor").order_by("name")
-        if getattr(self.request.user, "role", None) == "professor":
+        role = getattr(self.request.user, "role", None)
+
+        if role == "professor":
             return qs.filter(professor=self.request.user)
-        return qs
+
+        if role == "student":
+            return qs.filter(enrollments__user=self.request.user).distinct()
+
+        return Subject.objects.none()
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        role = getattr(self.request.user, "role", None)
+        ctx["is_professor"] = (role == "professor")
+        ctx["is_student"]  = (role == "student")
+        ctx["browse_url"]  = reverse_lazy("subjects:browse_subjects")
+        ctx["breadcrumbs"] = self.get_breadcrumbs()
+        return ctx
+
+# --------------------------
+# Browse / Enroll
+# --------------------------
+@login_required
+def browse_subjects(request):
+    """
+    List subjects the user can enroll in:
+    - Filtered to same institution if available.
+    - Excludes subjects already enrolled in.
+    """
+    user = request.user
+    institution = getattr(user, "institution", None)
+
+    qs = Subject.objects.select_related("professor").order_by("name")
+    if institution:
+        qs = qs.filter(professor__institution=institution)
+
+    qs = qs.exclude(enrollments__user=user)
+
+    breadcrumbs = [
+        ("Dashboard", DASHBOARD_URL),
+        ("My Subjects", reverse_lazy("subjects:my_subjects")),
+        ("Browse Subjects", ""),
+    ]
+    return render(request, "browse_subjects.html", {
+        "subjects": qs,
+        "breadcrumbs": breadcrumbs,
+    })
+
+@login_required
+@require_POST
+def enroll_subject(request, pk):
+    subject = get_object_or_404(Subject, pk=pk)
+    Enrollment.objects.get_or_create(user=request.user, subject=subject)
+    messages.success(request, f"You enrolled in {subject.name}.")
+    return redirect("subjects:my_subjects")
 
 # --------------------------
 # Create Subject View
@@ -65,7 +119,6 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
     def form_valid(self, form):
         """
         Prevent duplicate subject per professor (case-insensitive) on create.
-        If duplicate, render the same page with an error message so the modal can show.
         """
         subject = form.save(commit=False)
         subject.professor = self.request.user
@@ -215,7 +268,7 @@ def rename_subject(request, pk):
     """
     subject = get_object_or_404(Subject, pk=pk)
 
-    # Only the owning professor can rename (adjust if your auth rules differ)
+    # Only the owning professor can rename
     if subject.professor != request.user:
         return JsonResponse({"ok": False, "message": "Not allowed."}, status=403)
 

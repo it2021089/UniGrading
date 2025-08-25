@@ -63,3 +63,11 @@ class File(models.Model):
         if self.file and storage.exists(self.file.name):
             storage.delete(self.file.name)
         super().delete(*args, **kwargs)
+
+class Enrollment(models.Model):
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="enrollments")
+    subject = models.ForeignKey(Subject, on_delete=models.CASCADE, related_name="enrollments")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ("user", "subject")

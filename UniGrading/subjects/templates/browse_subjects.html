@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load view_breadcrumbs %}
+
+{% block title %}Browse Subjects{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      {% for name, url in breadcrumbs %}
+        <li class="breadcrumb-item"><a href="{{ url }}">{{ name }}</a></li>
+      {% endfor %}
+    </ol>
+  </nav>
+
+  <h3 class="mb-3">Browse Subjects</h3>
+
+  <div class="row">
+    {% for subject in subjects %}
+      <div class="col-md-4">
+        <div class="card mb-4 shadow-sm">
+          <div class="card-body">
+            <h5 class="card-title">{{ subject.name }}</h5>
+            <p class="card-text">{{ subject.description|default:"No description."|truncatewords:25 }}</p>
+            <p class="card-text">
+              <small class="text-muted">
+                Professor:
+                {% if subject.professor.first_name and subject.professor.last_name %}
+                  {{ subject.professor.first_name }} {{ subject.professor.last_name }}
+                {% else %}
+                  {{ subject.professor.email }}
+                {% endif %}
+              </small>
+            </p>
+            <form method="post" action="{% url 'subjects:enroll_subject' subject.pk %}">
+              {% csrf_token %}
+              <button class="btn btn-primary btn-block">Enroll</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    {% empty %}
+      <div class="col-12"><p class="text-muted">No subjects to show.</p></div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
