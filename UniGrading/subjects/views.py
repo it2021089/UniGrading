@@ -1,10 +1,9 @@
 from django.shortcuts import render, get_object_or_404, redirect
-from django.http import Http404, JsonResponse, HttpResponseRedirect, FileResponse, HttpResponse
+from django.http import Http404, JsonResponse, FileResponse, HttpResponse
 from django.contrib.auth.decorators import login_required
-from django.views.decorators.csrf import csrf_exempt
 from django.views.generic import DetailView, ListView, CreateView
 from django.contrib.auth.mixins import LoginRequiredMixin
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_POST, require_GET
 from django.urls import reverse_lazy
 from .models import Subject, Category, File
 from .forms import SubjectForm
@@ -14,12 +13,12 @@ from django.contrib import messages
 import mimetypes
 import logging
 from botocore.exceptions import ClientError
-from django.conf import settings
-from django.views.decorators.http import require_GET
 from django.views.decorators.clickjacking import xframe_options_exempt
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+DASHBOARD_URL = reverse_lazy("users:dashboard")
 
 # --------------------------
 # My Subjects View
@@ -31,14 +30,8 @@ class MySubjectsView(LoginRequiredMixin, BreadcrumbMixin, ListView):
     paginate_by = 6
 
     def get_breadcrumbs(self):
-        dashboard_url = reverse_lazy("users:login")
-        if getattr(self.request.user, "role", None) == "professor":
-            dashboard_url = reverse_lazy("users:professor_dashboard")
-        elif getattr(self.request.user, "role", None) == "student":
-            dashboard_url = reverse_lazy("users:student_dashboard")
-
         return [
-            ("Dashboard", dashboard_url),
+            ("Dashboard", DASHBOARD_URL),
             ("My Subjects", reverse_lazy("subjects:my_subjects")),
         ]
 
@@ -62,14 +55,8 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        dashboard_url = reverse_lazy("users:login")
-        if getattr(self.request.user, "role", None) == "professor":
-            dashboard_url = reverse_lazy("users:professor_dashboard")
-        elif getattr(self.request.user, "role", None) == "student":
-            dashboard_url = reverse_lazy("users:student_dashboard")
-
         context['breadcrumbs'] = [
-            ("Dashboard", dashboard_url),
+            ("Dashboard", DASHBOARD_URL),
             ("My Subjects", reverse_lazy("subjects:my_subjects")),
             ("Create Subject", "")
         ]
@@ -86,9 +73,7 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
 
         # Duplicate check scoped to professor
         if Subject.objects.filter(professor=self.request.user, name__iexact=name).exists():
-            from django.contrib import messages
             messages.error(self.request, "A subject with this name already exists.")
-            # Re-render the form page (no redirect), so template JS can pop the modal
             form.add_error("name", "Duplicate name for your account.")
             return self.render_to_response(self.get_context_data(form=form))
 
@@ -122,15 +107,8 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     context_object_name = "subject"
 
     def get_breadcrumbs(self):
-        if getattr(self.request.user, "role", None) == "professor":
-            dashboard_url = reverse_lazy("users:professor_dashboard")
-        elif getattr(self.request.user, "role", None) == "student":
-            dashboard_url = reverse_lazy("users:student_dashboard")
-        else:
-            dashboard_url = reverse_lazy("users:login")
-
         return [
-            ("Dashboard", dashboard_url),
+            ("Dashboard", DASHBOARD_URL),
             ("My Subjects", reverse_lazy("subjects:my_subjects")),
             (f"Subject: {self.object.name}", self.request.path),
         ]
@@ -146,8 +124,8 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
         subject = self.get_object()
         data = request.POST
         protected_categories = ["Courses", "Assignments", "Tests", "Other"]
-        
-          # === Update subject name (title) ===
+
+        # === Update subject name (title) ===
         if "update_subject_name" in data:
             new_name = (data.get("subject_name") or "").strip()
             if not new_name:
@@ -266,7 +244,6 @@ def rename_subject(request, pk):
 # --------------------------
 # Category Detail View
 # --------------------------
-
 class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
     model = Category
     template_name = "category_detail.html"
@@ -274,14 +251,6 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
 
     def get_breadcrumbs(self):
         category = self.get_object()
-
-        # Get correct dashboard based on role
-        if getattr(self.request.user, "role", None) == "professor":
-            dashboard_url = reverse_lazy("users:professor_dashboard")
-        elif getattr(self.request.user, "role", None) == "student":
-            dashboard_url = reverse_lazy("users:student_dashboard")
-        else:
-            dashboard_url = reverse_lazy("users:login")
 
         # Traverse up through parent categories to build path
         breadcrumb_categories = []
@@ -292,7 +261,7 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
 
         # Build final breadcrumb list
         breadcrumbs = [
-            ("Dashboard", dashboard_url),
+            ("Dashboard", DASHBOARD_URL),
             ("My Subjects", reverse_lazy("subjects:my_subjects")),
             (f"Subject: {category.subject.name}", reverse_lazy("subjects:subject_detail", args=[category.subject.pk])),
         ]
@@ -399,7 +368,7 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             sub.delete()
             return jok()
 
-                # Upload file (supports AJAX FormData and normal form submission)
+        # Upload file (supports AJAX FormData and normal form submission)
         if "new_file" in request.POST or (
             request.headers.get("X-Requested-With") == "XMLHttpRequest" and "file" in request.FILES
         ):
@@ -425,6 +394,7 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
                     return JsonResponse({"status": "error", "message": f"Upload failed: {str(e)}"}, status=500)
                 messages.error(request, f"Upload failed: {str(e)}")
             return redirect(self.request.path)
+
         # Delete file (non-AJAX form post)
         if "delete_file" in data:
             file_id = data.get("file_id")
@@ -438,7 +408,6 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
 
         # Fallback
         return redirect(self.request.path)
-
 
 # --------------------------
 # Delete Subject (Function-Based View)
@@ -516,7 +485,6 @@ def download_file(request, file_id):
         if request.headers.get("X-Requested-With") == "XMLHttpRequest":
             return JsonResponse({"status": "error", "message": "File not found"}, status=404)
         else:
-            # fallback if JS isn't used
             return redirect('subjects:category_detail', pk=file_obj.category.pk)
 
 # --------------------------

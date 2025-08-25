@@ -33,8 +33,7 @@ def my_tests(request, subject_id):
 
     breadcrumbs = [
         ("Dashboard",
-         reverse_lazy("users:professor_dashboard") if getattr(request.user, "role", None) == "professor"
-         else reverse_lazy("users:student_dashboard")),
+         reverse_lazy("users:dashboard") ),
         ("My Subjects", reverse_lazy("subjects:my_subjects")),
         (f"Subject: {subject.name}", reverse_lazy("subjects:subject_detail", args=[subject.id])),
         ("Tests", ""),  # current page
@@ -179,7 +178,7 @@ def test_detail(request, subject_id, test_id=None):
 
     current_label = "Create Test" if not instance else f"Edit Test: {instance.name}"
     breadcrumbs = [
-        ("Dashboard", reverse_lazy("users:professor_dashboard")),
+        ("Dashboard", reverse_lazy("users:dashboard")),
         ("My Subjects", reverse_lazy("subjects:my_subjects")),
         (f"Subject: {subject.name}", reverse_lazy("subjects:subject_detail", args=[subject.id])),
         ("Tests", reverse("tests:my_tests", kwargs={"subject_id": subject.id})),

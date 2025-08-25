@@ -1,27 +1,25 @@
+# users/views.py
+from django.contrib import messages
 from django.contrib.auth.forms import AuthenticationForm
 from django.contrib.auth import get_backends, login, logout
-from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
-from django.views.generic.edit import FormView
-from django.views.generic import DetailView
-from django.views.generic import TemplateView
-from django.shortcuts import redirect, render
-from django.http import HttpResponseRedirect
-from .forms import UserRegistrationForm, ProfileForm
-from django.urls import reverse, reverse_lazy
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth.mixins import LoginRequiredMixin
+from django.views.generic.edit import FormView
+from django.views.generic import TemplateView
+from django.shortcuts import redirect, render, get_object_or_404
+from django.urls import reverse_lazy
 from UniGrading.mixin import BreadcrumbMixin
+
+from .forms import UserRegistrationForm, ProfileForm
+
 
 @login_required
 def home(request):
-    role = request.user.role
-    if role == 'professor':
-        return redirect('users:professor_dashboard')
-    elif role == 'student':
-        return redirect('users:student_dashboard')
-    else:
-        return redirect('users:login')  
+    # Any authenticated user goes to the unified dashboard
+    return redirect("users:dashboard")
 
-# Registration View
+
+# ---------- Registration ----------
 class RegisterView(FormView):
     template_name = "register.html"
     form_class = UserRegistrationForm
@@ -33,19 +31,15 @@ class RegisterView(FormView):
         user.institution = form.cleaned_data["institution"]
         user.save()
 
+        # Log the user in immediately after signup
         backend = get_backends()[0]
         user.backend = f"{backend.__module__}.{backend.__class__.__name__}"
         login(self.request, user)
 
-        # Redirect based on the user's role
-        if user.role == "professor":
-            return HttpResponseRedirect(reverse_lazy("professor_dashboard"))
-        elif user.role == "student":
-            return HttpResponseRedirect(reverse_lazy("student_dashboard"))
-        else:
-            return HttpResponseRedirect(reverse_lazy("login"))  
+        return redirect("users:dashboard")
 
-# Login View
+
+# ---------- Login (CBV) ----------
 class LoginView(FormView):
     template_name = "login.html"
     form_class = AuthenticationForm
@@ -53,31 +47,18 @@ class LoginView(FormView):
     def form_valid(self, form):
         user = form.get_user()
         login(self.request, user)
-        role = user.role
-        if role == "professor":
-            return redirect("users:professor_dashboard")
-        elif role == "student":
-            return redirect("users:student_dashboard")
-        return redirect("users:login")  
-    
-# Professor Dashboard View
-class ProfessorDashboardView(LoginRequiredMixin, UserPassesTestMixin, BreadcrumbMixin, TemplateView):
-    template_name = "professor_dashboard.html"
-    breadcrumbs = [("Dashboard", "/professor_dashboard/")]
-
-    def test_func(self):
-        return self.request.user.role == "professor"
+        return redirect("users:dashboard")
 
 
-# Student Dashboard View
-class StudentDashboardView(LoginRequiredMixin, UserPassesTestMixin, BreadcrumbMixin, TemplateView):
-    template_name = "student_dashboard.html"
-    breadcrumbs = [("Dashboard", "/student_dashboard/")]
+# ---------- Dashboard (single for all) ----------
+class DashboardView(LoginRequiredMixin, BreadcrumbMixin, TemplateView):
+    template_name = "dashboard.html"
 
-    def test_func(self):
-        return self.request.user.role == "student"
+    def get_breadcrumbs(self):
+        return [("Dashboard", reverse_lazy("users:dashboard"))]
 
 
+# ---------- Profile ----------
 class ProfileView(LoginRequiredMixin, BreadcrumbMixin, FormView):
     template_name = "profile.html"
     form_class = ProfileForm
@@ -88,12 +69,10 @@ class ProfileView(LoginRequiredMixin, BreadcrumbMixin, FormView):
         return kwargs
 
     def get_breadcrumbs(self):
-        user = self.request.user
-        if user.role == "professor":
-            return [("Dashboard", "/professor-dashboard/"), ("Profile", "/profile/")]
-        elif user.role == "student":
-            return [("Dashboard", "/student-dashboard/"), ("Profile", "/profile/")]
-        return [("Dashboard", "/dashboard/"), ("Profile", "/profile/")]
+        return [
+            ("Dashboard", reverse_lazy("users:dashboard")),
+            ("Profile", ""),
+        ]
 
     def form_valid(self, form):
         user = form.save(commit=False)
@@ -101,22 +80,25 @@ class ProfileView(LoginRequiredMixin, BreadcrumbMixin, FormView):
         if password:
             user.set_password(password)
         user.save()
-       
+        messages.success(self.request, "Profile updated successfully.")
+        return redirect("users:profile")  
 
 
+# ---------- Logout ----------
 @login_required
 def user_logout(request):
     logout(request)
     return redirect("users:login")
 
-#Login View 
+
+# ---------- Login (FBV alternative) ----------
 def user_login(request):
-    if request.method == 'POST':
+    if request.method == "POST":
         form = AuthenticationForm(data=request.POST)
         if form.is_valid():
             user = form.get_user()
             login(request, user)
-            return redirect('dashboard')
+            return redirect("users:dashboard")
     else:
         form = AuthenticationForm()
-    return render(request, 'login.html', {'form': form})
+    return render(request, "login.html", {"form": form})
