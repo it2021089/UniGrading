@@ -1,0 +1,42 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load view_breadcrumbs %}
+
+{% block title %}Submissions · {{ test.name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      {% for name, url in breadcrumbs %}
+        <li class="breadcrumb-item"><a href="{{ url }}">{{ name }}</a></li>
+      {% endfor %}
+    </ol>
+  </nav>
+
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h3>Submissions — {{ test.name }}</h3>
+    <a href="{% url 'tests:my_tests' subject.id %}" class="btn btn-outline-secondary">Back to Tests</a>
+  </div>
+
+  {% if attempts %}
+    <div class="list-group">
+      {% for a in attempts %}
+        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+           href="{% url 'tests:test_attempt_detail' subject.id test.id a.id %}">
+          <div>
+            <strong>{{ a.student.get_full_name|default:a.student.email }}</strong>
+            <div class="small text-muted">
+              Submitted: {{ a.submitted_at|date:"Y-m-d H:i" }}
+              · Score: {{ a.score }}/{{ a.max_score }} ({{ a.pct|floatformat:2 }}%)
+            </div>
+          </div>
+          <i class="fas fa-chevron-right"></i>
+        </a>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="text-muted">No submissions yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,134 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load view_breadcrumbs %}
+
+{% block title %}Analytics · {{ test.name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5 no-hover-card ">
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      {% for name, url in breadcrumbs %}
+        <li class="breadcrumb-item">
+          {% if url %}
+            <a href="{{ url }}">{{ name }}</a>
+          {% else %}
+            {{ name }}
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ol>
+  </nav>
+
+  <div class="d-flex justify-content-between align-items-center mb-3 no-hover-card">
+    <h3>Analytics — {{ test.name }}</h3>
+    <a href="{% url 'tests:my_tests' subject.id %}" class="btn btn-outline-secondary">Back to Tests</a>
+  </div>
+
+  {% if total_attempts == 0 %}
+    <div class="alert alert-info">
+      No attempts yet — analytics will appear after students submit.
+    </div>
+  {% else %}
+    <div class="row ">
+      <div class="col-md-4 mb-4">
+        <div class="card text-center shadow-sm no-hover-card">
+          <div class="card-body">
+            <h5 class="card-title">Average Score</h5>
+            <canvas id="avgDonut" width="220" height="220"></canvas>
+            <div class="mt-2">
+              <strong>{{ avg_pct|floatformat:2 }}%</strong> ({{ total_attempts }} attempts)
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="col-md-8 mb-4">
+        <div class="card shadow-sm no-hover-card">
+          <div class="card-body">
+            <h5 class="card-title mb-3">Per-question Correctness</h5>
+            <canvas id="qBar" height="140"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {% if q_stats %}
+      <div class="card shadow-sm no-hover-card">
+        <div class="card-body">
+          <h5 class="card-title">Question Breakdown</h5>
+          <div class="table-responsive">
+            <table class="table table-sm">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Question</th>
+                  <th class="text-right">Answered</th>
+                  <th class="text-right">Correct</th>
+                  <th class="text-right">Correct %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in q_stats %}
+                  <tr>
+                    <td>{{ row.index }}</td>
+                    <td>{{ row.text|truncatechars:120 }}</td>
+                    <td class="text-right">{{ row.total }}</td>
+                    <td class="text-right">{{ row.correct }}</td>
+                    <td class="text-right">{{ row.pct|floatformat:2 }}%</td>
+                  </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    {% endif %}
+  {% endif %}
+</div>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  (function() {
+    const attempts = {{ total_attempts|default:0 }};
+    if (!attempts) return;
+
+    // Donut for average score
+    const donut = document.getElementById('avgDonut');
+    if (donut) {
+      const avg = {{ avg_pct|default:0 }};
+      const rest = Math.max(0, 100 - avg);
+      new Chart(donut, {
+        type: 'doughnut',
+        data: {
+          labels: ['Average %', 'Remaining'],
+          datasets: [{ data: [avg, rest] }]
+        },
+        options: {
+          cutout: '70%',
+          plugins: { legend: { display: false } }
+        }
+      });
+    }
+
+    // Bar per-question correctness
+    const bar = document.getElementById('qBar');
+    if (bar) {
+      const labels = {{ q_labels_json|safe }};
+      const data = {{ q_data_json|safe }};
+      new Chart(bar, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [{ label: '% Correct', data: data }]
+        },
+        options: {
+          responsive: true,
+          scales: { y: { beginAtZero: true, max: 100 } }
+        }
+      });
+    }
+  })();
+</script>
+{% endblock %}

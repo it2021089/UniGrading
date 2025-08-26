@@ -1,0 +1,45 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load view_breadcrumbs %}
+
+{% block title %}Attempt — {{ test.name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      {% for name, url in breadcrumbs %}
+        <li class="breadcrumb-item"><a href="{{ url }}">{{ name }}</a></li>
+      {% endfor %}
+    </ol>
+  </nav>
+
+  <div class="card shadow-sm no-hover-card">
+    <div class="card-header bg-primary text-white d-flex justify-content-between">
+      <div>
+        <strong>Attempt</strong> — {{ attempt.student.get_full_name|default:attempt.student.email }}
+      </div>
+      <div>
+        Score: <strong>{{ attempt.score }}/{{ attempt.max_score }}</strong>
+        ({{ pct|floatformat:2 }}%)
+      </div>
+    </div>
+    <div class="card-body">
+      {% for r in rows %}
+        <div class="mb-3 p-3 border rounded">
+          <div class="font-weight-bold">Q{{ forloop.counter }}. {{ r.question.text }}</div>
+          <div class="mt-2">
+            <span class="badge {% if r.is_correct %}badge-success{% else %}badge-danger{% endif %}">
+              {% if r.is_correct %}Correct{% else %}Incorrect{% endif %}
+            </span>
+          </div>
+          <div class="mt-2">
+            <div><strong>Your answer:</strong> {{ r.chosen.text|default:"—" }}</div>
+            <div><strong>Correct answer:</strong> {{ r.correct_choice.text|default:"—" }}</div>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% endblock %}

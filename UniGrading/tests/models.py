@@ -35,15 +35,26 @@ class Choice(models.Model):
         return f"{'* ' if self.is_correct else ''}{self.text[:60]}"
 
 
-# (Optional, for when students take tests; safe to keep for future)
 class TestAttempt(models.Model):
-    test = models.ForeignKey(Test, on_delete=models.CASCADE, related_name="attempts")
-    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="test_attempts")
+    test = models.ForeignKey('tests.Test', on_delete=models.CASCADE, related_name='attempts')
+    student = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='test_attempts')
     started_at = models.DateTimeField(auto_now_add=True)
-    submitted_at = models.DateTimeField(null=True, blank=True)
-    score = models.FloatField(null=True, blank=True)  # percentage 0..100
+    submitted_at = models.DateTimeField(auto_now_add=True)
+    score = models.IntegerField(default=0)
+    max_score = models.IntegerField(default=0)
+    duration_seconds = models.IntegerField(default=0)
 
-class Answer(models.Model):
-    attempt = models.ForeignKey(TestAttempt, on_delete=models.CASCADE, related_name="answers")
-    question = models.ForeignKey(Question, on_delete=models.CASCADE)
-    selected_choice = models.ForeignKey(Choice, on_delete=models.CASCADE)
+    class Meta:
+        ordering = ['-submitted_at']
+
+    def __str__(self):
+        return f"{self.student} – {self.test} – {self.score}/{self.max_score}"
+
+class AttemptAnswer(models.Model):
+    attempt = models.ForeignKey(TestAttempt, on_delete=models.CASCADE, related_name='answers')
+    question = models.ForeignKey('tests.Question', on_delete=models.CASCADE)
+    choice = models.ForeignKey('tests.Choice', on_delete=models.CASCADE)
+    is_correct = models.BooleanField(default=False)
+
+    class Meta:
+        unique_together = (('attempt', 'question'),)

@@ -63,7 +63,7 @@ class MySubjectsView(LoginRequiredMixin, BreadcrumbMixin, ListView):
         return ctx
 
 # --------------------------
-# Browse / Enroll
+# Browse / Enroll / Unenroll
 # --------------------------
 @login_required
 def browse_subjects(request):
@@ -102,16 +102,23 @@ def browse_subjects(request):
 @require_POST
 def enroll_subject(request, pk):
     subject = get_object_or_404(Subject, pk=pk)
+    enrollment, created = Enrollment.objects.get_or_create(user=request.user, subject=subject)
+    if created:
+        messages.success(request, f"You have enrolled in “{subject.name}”.")
+    else:
+        messages.info(request, f"You’re already enrolled in “{subject.name}”.")
+    return redirect("subjects:subject_detail", pk=subject.pk)
 
-    if getattr(request.user, "role", None) == "professor" and subject.professor_id == request.user.id:
-        messages.info(request, "You can't enroll in your own subject.")
-        return redirect("subjects:browse_subjects")
-
-    Enrollment.objects.get_or_create(user=request.user, subject=subject)
-    messages.success(request, f"You enrolled in {subject.name}.")
+@login_required
+@require_POST
+def unenroll_subject(request, pk):
+    subject = get_object_or_404(Subject, pk=pk)
+    deleted, _ = Enrollment.objects.filter(user=request.user, subject=subject).delete()
+    if deleted:
+        messages.success(request, f"You have unenrolled from “{subject.name}”.")
+    else:
+        messages.info(request, f"You weren’t enrolled in “{subject.name}”.")
     return redirect("subjects:my_subjects")
-
-
 # --------------------------
 # Create Subject View
 # --------------------------
@@ -184,6 +191,22 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
         context["categories"] = self.object.categories.filter(parent__isnull=True)
         context["protected_categories"] = ["Courses", "Assignments", "Tests", "Other"]
         context["breadcrumbs"] = self.get_breadcrumbs()
+        return context
+    
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["categories"] = self.object.categories.filter(parent__isnull=True)
+        context["protected_categories"] = ["Courses", "Assignments", "Tests", "Other"]
+        context["breadcrumbs"] = self.get_breadcrumbs()
+        context["is_owner"] = (self.request.user == self.object.professor)
+
+        is_enrolled = self.object.enrollments.filter(user=self.request.user).exists()
+        is_owner = (self.object.professor_id == self.request.user.id)
+        can_unenroll = is_enrolled and (
+            self.request.user.role == "student" or not is_owner
+        )
+        context["can_unenroll"] = can_unenroll
+
         return context
 
     def post(self, request, *args, **kwargs):
@@ -266,7 +289,8 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
                 return JsonResponse({"status": "success", "message": "Category name updated!"})
             except Category.DoesNotExist:
                 return JsonResponse({"status": "error", "message": "Category not found."})
-
+        
+        
         return redirect(self.request.path)
 
 # --------------------------

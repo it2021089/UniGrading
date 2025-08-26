@@ -16,26 +16,51 @@
 
   <div class="d-flex justify-content-between mb-3">
     <h3>Tests for {{ subject.name }}</h3>
-    <a href="{% url 'tests:create_test' subject.id %}" class="btn btn-primary">
-      <i class="fas fa-plus"></i> Create Test
-    </a>
+
+    {% if can_manage %}
+      <a href="{% url 'tests:create_test' subject.id %}" class="btn btn-primary">
+        <i class="fas fa-plus"></i> Create Test
+      </a>
+    {% endif %}
   </div>
 
   {% if tests %}
-    <div class="list-group">
-      {% for t in tests %}
-        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
-           href="{% url 'tests:edit_test' subject.id t.id %}">
-          <div>
-            <strong>{{ t.name }}</strong>
-            <div class="small text-muted">Duration: {{ t.duration_minutes }} min · {{ t.created_at|date:"Y-m-d H:i" }}</div>
+  <div class="list-group">
+    {% for t in tests %}
+      <div class="list-group-item d-flex justify-content-between align-items-center">
+        <div>
+          <strong>{{ t.name }}</strong>
+          <div class="small text-muted">
+            Duration: {{ t.duration_minutes }} min · {{ t.created_at|date:"Y-m-d H:i" }}
           </div>
-          <i class="fas fa-chevron-right"></i>
-        </a>
-      {% endfor %}
-    </div>
-  {% else %}
-    <p class="text-muted">No tests yet.</p>
-  {% endif %}
+
+          {% if not can_manage and t.score_pct is not None %}
+            <div class="small">
+              Your Score: <strong>{{ t.score_pct|floatformat:2 }}%</strong>
+            </div>
+          {% endif %}
+        </div>
+
+        <div class="btn-group">
+          {% if can_manage %}
+            <a class="btn btn-outline-primary" href="{% url 'tests:edit_test' subject.id t.id %}">Edit</a>
+            <a class="btn btn-outline-info" href="{% url 'tests:test_submissions' subject.id t.id %}">Submissions</a>
+            <a class="btn btn-outline-secondary" href="{% url 'tests:test_analytics' subject.id t.id %}">Analytics</a>
+          {% else %}
+            {% if t.can_take %}
+              <a class="btn btn-success" href="{% url 'tests:take_test' subject.id t.id %}">Take Test</a>
+            {% else %}
+              <a class="btn btn-outline-secondary" href="{% url 'tests:test_attempt_detail' subject.id t.id t.user_attempt_id %}">
+                Review
+              </a>
+            {% endif %}
+          {% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+{% else %}
+  <p class="text-muted">No tests yet.</p>
+{% endif %}
 </div>
 {% endblock %}

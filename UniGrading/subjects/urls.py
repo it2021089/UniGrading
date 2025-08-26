@@ -22,4 +22,6 @@ urlpatterns = [
     path("file/<int:pk>/preview/", views.preview_file, name="preview_file"),
     path("browse/", browse_subjects, name="browse_subjects"),
     path("<int:pk>/enroll/", enroll_subject, name="enroll_subject"),
+    path("<int:subject_id>/unenroll/", views.unenroll_subject, name="unenroll_subject"),
+
 ]

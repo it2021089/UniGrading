@@ -7,146 +7,163 @@
 
 {% block content %}
 <div class="container mt-5">
-    <!-- Breadcrumbs -->
-    <nav aria-label="breadcrumb">
-        <ol class="breadcrumb">
-            {% for name, url in breadcrumbs %}
-                <li class="breadcrumb-item"><a href="{{ url }}">{{ name }}</a></li>
-            {% endfor %}
-        </ol>
-    </nav>
+  <!-- Breadcrumbs -->
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      {% for name, url in breadcrumbs %}
+        <li class="breadcrumb-item"><a href="{{ url }}">{{ name }}</a></li>
+      {% endfor %}
+    </ol>
+  </nav>
 
-    {% if messages %}
-        <div class="container mt-3">
-            {% for message in messages %}
-                <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
-                    {{ message }}
-                    <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
-                </div>
-            {% endfor %}
+  {% if messages %}
+    <div class="container mt-3">
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
         </div>
-    {% endif %}
-
-    <!-- Category Content -->
-    <div class="row justify-content-center">
-        <div class="col-md-10">
-            <div class="card shadow-sm no-hover-card">
-                <div class="card-header bg-primary text-white">
-                    <h4 class="mb-0">{{ category.name }}</h4>
-                </div>
-                <div class="card-body">
-                    <h5 class="mb-3">Files and Folders</h5>
-                    <ul class="list-group mb-4">
-                        <!-- Subcategories -->
-                        {% for subcategory in category.subcategories.all %}
-                            <li class="list-group-item d-flex justify-content-between align-items-center">
-                                <div class="d-flex align-items-center flex-grow-1">
-                                    <i class="fas fa-folder text-warning mr-2"></i>
-                                    <div class="subcategory-name" style="flex-grow: 1;">
-                                        <a href="{% url 'subjects:category_detail' subcategory.pk %}">
-                                            <span id="subcategory-name-{{ subcategory.pk }}">{{ subcategory.name }}</span>
-                                        </a>
-                                        <div class="edit-form d-none mt-2">
-                                            <div class="input-group">
-                                                <input type="text" 
-                                                       id="edit-subcategory-{{ subcategory.pk }}"
-                                                       value="{{ subcategory.name }}" 
-                                                       class="form-control">
-                                                <div class="input-group-append">
-                                                    <button class="btn btn-success" onclick="saveSubcategoryRename({{ subcategory.pk }})">
-                                                        <i class="fas fa-check"></i>
-                                                    </button>
-                                                    <button class="btn btn-secondary" onclick="cancelSubcategoryRename({{ subcategory.pk }})">
-                                                        <i class="fas fa-times"></i>
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div>
-                                    <button class="btn btn-sm btn-outline-primary mr-1" onclick="startEdit({{ subcategory.pk }})">
-                                        <i class="fas fa-edit"></i>
-                                    </button>
-                                    <button class="btn btn-sm btn-outline-danger" onclick="showDeleteSubcategoryModal({{ subcategory.pk }}, '{{ subcategory.name }}')">
-                                        <i class="fas fa-trash-alt"></i>
-                                    </button>
-                                </div>
-                            </li>
-                        {% empty %}
-                            <li class="list-group-item text-muted">No folders available.</li>
-                        {% endfor %}
-
-                        <!-- Files -->
-                        {% for file in files %}
-                            <li class="list-group-item">
-                                <div class="d-flex align-items-center justify-content-between">
-                                    <div class="d-flex align-items-center">
-                                        <i class="fas fa-file-alt fa-2x text-secondary mr-3"></i>
-                                        <div>
-                                            <strong>{{ file.name }}</strong><br>
-                                            <small class="text-muted">
-                                                {% if file.is_missing %}
-                                                    <span class="text-danger">[Missing from storage]</span>
-                                                {% else %}
-                                                    Size: {{ file.size_kb }} KB |
-                                                {% endif %}
-                                                Uploaded: {{ file.uploaded_at|naturaltime }}
-                                            </small>
-                                        </div>
-                                    </div>
-                                    <div class="btn-group">
-                                        <button class="btn btn-sm btn-outline-info"
-                                                onclick="showPreview('{% url 'subjects:preview_file' file.pk %}', '{{ file.name }}')">
-                                            <i class="fas fa-eye"></i> Preview
-                                        </button>
-                                        <button class="btn btn-sm btn-outline-success" onclick="safeDownload('{% url 'subjects:download_file' file.pk %}')">
-                                            <i class="fas fa-download"></i> Download
-                                        </button>
-                                        <button class="btn btn-sm btn-outline-danger"
-                                                onclick="deleteFile({{ file.pk }}, '{{ file.name }}')">
-                                            <i class="fas fa-trash-alt"></i>
-                                        </button>
-                                    </div>
-                                </div>
-                            </li>
-                        {% empty %}
-                            <li class="list-group-item text-muted">No files available.</li>
-                        {% endfor %}
-                    </ul>
-
-                    <!-- Add Folder -->
-                    <div class="input-group mb-3">
-                        <input type="text" id="new-folder-name" class="form-control" placeholder="New Folder Name">
-                        <div class="input-group-append">
-                            <button class="btn btn-outline-primary" onclick="addFolder()">
-                                <i class="fas fa-plus"></i> Add Folder
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Upload File (plain form post to match views.py) -->
-                    <form method="post" enctype="multipart/form-data" class="input-group mb-3">
-                        {% csrf_token %}
-                        <input type="hidden" name="new_file" value="1">
-                        <input type="file" name="file" id="file-input" class="form-control-file">
-                        <div class="input-group-append">
-                            <button class="btn btn-outline-primary" type="submit">
-                                <i class="fas fa-upload"></i> Upload File
-                            </button>
-                        </div>
-                    </form>
-
-                    <!-- Hidden form used by deleteFile() JS -->
-                    <form id="delete-file-form" method="post" style="display:none;">
-                        {% csrf_token %}
-                        <input type="hidden" name="delete_file" value="1">
-                        <input type="hidden" name="file_id" id="delete-file-id">
-                    </form>
-                </div>
-            </div>
-        </div>
+      {% endfor %}
     </div>
+  {% endif %}
+
+  <div class="row justify-content-center">
+    <div class="col-md-10">
+      <div class="card shadow-sm no-hover-card">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+          <h4 class="mb-0">{{ category.name }}</h4>
+          {% if not is_owner %}
+            <span class="badge badge-light">Read‑only</span>
+          {% endif %}
+        </div>
+
+        <div class="card-body">
+          <h5 class="mb-3">Files and Folders</h5>
+
+          <ul class="list-group mb-4">
+            <!-- Subcategories -->
+            {% for subcategory in category.subcategories.all %}
+              <li class="list-group-item d-flex justify-content-between align-items-center">
+                <div class="d-flex align-items-center flex-grow-1">
+                  <i class="fas fa-folder text-warning mr-2"></i>
+                  <div class="subcategory-name" style="flex-grow: 1;">
+                    <a href="{% url 'subjects:category_detail' subcategory.pk %}">
+                      <span id="subcategory-name-{{ subcategory.pk }}">{{ subcategory.name }}</span>
+                    </a>
+
+                    {% if is_owner %}
+                      <div class="edit-form d-none mt-2">
+                        <div class="input-group">
+                          <input type="text"
+                                 id="edit-subcategory-{{ subcategory.pk }}"
+                                 value="{{ subcategory.name }}"
+                                 class="form-control">
+                          <div class="input-group-append">
+                            <button class="btn btn-success" onclick="saveSubcategoryRename({{ subcategory.pk }})">
+                              <i class="fas fa-check"></i>
+                            </button>
+                            <button class="btn btn-secondary" onclick="cancelSubcategoryRename({{ subcategory.pk }})">
+                              <i class="fas fa-times"></i>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    {% endif %}
+                  </div>
+                </div>
+
+                {% if is_owner %}
+                  <div>
+                    <button class="btn btn-sm btn-outline-primary mr-1" onclick="startEdit({{ subcategory.pk }})">
+                      <i class="fas fa-edit"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger"
+                            onclick="showDeleteSubcategoryModal({{ subcategory.pk }}, '{{ subcategory.name }}')">
+                      <i class="fas fa-trash-alt"></i>
+                    </button>
+                  </div>
+                {% endif %}
+              </li>
+            {% empty %}
+              <li class="list-group-item text-muted">No folders available.</li>
+            {% endfor %}
+
+            <!-- Files -->
+            {% for file in files %}
+              <li class="list-group-item">
+                <div class="d-flex align-items-center justify-content-between">
+                  <div class="d-flex align-items-center">
+                    <i class="fas fa-file-alt fa-2x text-secondary mr-3"></i>
+                    <div>
+                      <strong>{{ file.name }}</strong><br>
+                      <small class="text-muted">
+                        {% if file.is_missing %}
+                          <span class="text-danger">[Missing from storage]</span>
+                        {% else %}
+                          Size: {{ file.size_kb }} KB |
+                        {% endif %}
+                        Uploaded: {{ file.uploaded_at|naturaltime }}
+                      </small>
+                    </div>
+                  </div>
+
+                  <div class="btn-group">
+                    <button class="btn btn-sm btn-outline-info"
+                            onclick="showPreview('{% url 'subjects:preview_file' file.pk %}', '{{ file.name }}')">
+                      <i class="fas fa-eye"></i> Preview
+                    </button>
+                    <button class="btn btn-sm btn-outline-success"
+                            onclick="safeDownload('{% url 'subjects:download_file' file.pk %}')">
+                      <i class="fas fa-download"></i> Download
+                    </button>
+                    {% if is_owner %}
+                      <button class="btn btn-sm btn-outline-danger"
+                              onclick="deleteFile({{ file.pk }}, '{{ file.name }}')">
+                        <i class="fas fa-trash-alt"></i>
+                      </button>
+                    {% endif %}
+                  </div>
+                </div>
+              </li>
+            {% empty %}
+              <li class="list-group-item text-muted">No files available.</li>
+            {% endfor %}
+          </ul>
+
+          {% if is_owner %}
+            <!-- Add Folder -->
+            <div class="input-group mb-3">
+              <input type="text" id="new-folder-name" class="form-control" placeholder="New Folder Name">
+              <div class="input-group-append">
+                <button class="btn btn-outline-primary" onclick="addFolder()">
+                  <i class="fas fa-plus"></i> Add Folder
+                </button>
+              </div>
+            </div>
+
+            <!-- Upload File -->
+            <form method="post" enctype="multipart/form-data" class="input-group mb-3">
+              {% csrf_token %}
+              <input type="hidden" name="new_file" value="1">
+              <input type="file" name="file" id="file-input" class="form-control-file">
+              <div class="input-group-append">
+                <button class="btn btn-outline-primary" type="submit">
+                  <i class="fas fa-upload"></i> Upload File
+                </button>
+              </div>
+            </form>
+
+            <!-- Hidden form used by deleteFile() JS -->
+            <form id="delete-file-form" method="post" style="display:none;">
+              {% csrf_token %}
+              <input type="hidden" name="delete_file" value="1">
+              <input type="hidden" name="file_id" id="delete-file-id">
+            </form>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- Preview Modal -->
@@ -188,7 +205,7 @@
   </div>
 </div>
 
-<!-- Single Info Modal (reused everywhere) -->
+<!-- Single Info Modal -->
 <div class="modal fade" id="infoModal" tabindex="-1" role="dialog" aria-hidden="true">
   <div class="modal-dialog" role="document">
     <div class="modal-content border-warning">
@@ -226,13 +243,12 @@
   // -- CSRF --
   function csrfToken() { return '{{ csrf_token }}'; }
 
-  // -- Info modal (single) --
   function showInfo(msg) {
     $('#infoModalMessage').text(msg);
     $('#infoModal').modal('show');
   }
 
-  // ===== Subcategory actions (AJAX JSON) =====
+  // ===== Subcategory actions (AJAX JSON, owner only in UI) =====
   function showDeleteSubcategoryModal(id, name) {
     window._delSubId = id;
     $('#subcategoryToDeleteName').text(name);
@@ -262,7 +278,6 @@
   }
 
   function startEdit(id) {
-    // Hide link, show inline editor
     const a = document.querySelector(`#subcategory-name-${id}`).closest('a');
     a.style.display = 'none';
     const edit = a.closest('.subcategory-name').querySelector('.edit-form');
@@ -357,7 +372,6 @@
     }
   }
 
-  // ===== File helpers =====
   function safeDownload(url) {
     window.location.href = url;
   }
@@ -366,8 +380,7 @@
     if (!confirm(`Delete file "${name}"?`)) return;
     const form = document.getElementById('delete-file-form');
     document.getElementById('delete-file-id').value = id;
-    form.submit(); 
+    form.submit();
   }
 </script>
-
 {% endblock %}

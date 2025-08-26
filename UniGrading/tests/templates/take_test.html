@@ -1,0 +1,83 @@
+{% extends 'base.html' %}
+{% load static %}
+{% load view_breadcrumbs %}
+
+{% block title %}Take: {{ test.name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      {% for name, url in breadcrumbs %}
+        <li class="breadcrumb-item"><a href="{{ url }}">{{ name }}</a></li>
+      {% endfor %}
+    </ol>
+  </nav>
+
+  <div class="card shadow-sm no-hover-card">
+    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+      <h4 class="mb-0">{{ test.name }}</h4>
+      <a href="{% url 'tests:my_tests' subject.id %}" class="btn btn-sm btn-light">Back to Tests</a>
+    </div>
+
+    <div class="card-body">
+      <div id="preStart">
+        <p><strong>Duration:</strong> {{ test.duration_minutes }} minutes</p>
+        <button class="btn btn-success" id="startBtn">Start Test</button>
+      </div>
+
+      <form method="post" id="takeForm" action="{% url 'tests:submit_attempt' subject.id test.id %}" class="d-none">
+        {% csrf_token %}
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <div class="h5 mb-0">Time left: <span id="timeLeft"></span></div>
+          <button type="submit" class="btn btn-primary">Submit</button>
+        </div>
+
+        {% for q in questions %}
+          <div class="border rounded p-3 mb-3">
+            <p class="font-weight-bold">Q{{ forloop.counter }}. {{ q.text }}</p>
+            {% for c in q.choices.all %}
+              <div class="form-check">
+                <input class="form-check-input" type="radio" name="answer-{{ q.id }}" id="c-{{ c.id }}" value="{{ c.id }}">
+                <label class="form-check-label" for="c-{{ c.id }}">{{ c.text }}</label>
+              </div>
+            {% endfor %}
+          </div>
+        {% endfor %}
+
+        <button type="submit" class="btn btn-primary">Submit</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<script>
+  const durationMinutes = {{ test.duration_minutes|default:0 }};
+  const startBtn = document.getElementById('startBtn');
+  const preStart = document.getElementById('preStart');
+  const takeForm = document.getElementById('takeForm');
+  const timeLeft = document.getElementById('timeLeft');
+
+  function startTimer(mins) {
+    let remaining = mins * 60;
+    const tick = () => {
+      const m = Math.floor(remaining / 60);
+      const s = remaining % 60;
+      timeLeft.textContent = `${m}:${s.toString().padStart(2,'0')}`;
+      if (remaining <= 0) {
+        takeForm.submit();
+      } else {
+        remaining -= 1;
+        setTimeout(tick, 1000);
+      }
+    };
+    tick();
+  }
+
+  startBtn.addEventListener('click', () => {
+    preStart.classList.add('d-none');
+    takeForm.classList.remove('d-none');
+    if (durationMinutes > 0) startTimer(durationMinutes);
+  });
+</script>
+{% endblock %}

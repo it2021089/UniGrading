@@ -28,9 +28,19 @@
               readonly
               value="{{ subject.name }}"
             >
+            <div class="small text-white-50">
+              Taught by:
+              {% if subject.professor.first_name or subject.professor.last_name %}
+                {{ subject.professor.first_name }} {{ subject.professor.last_name }}
+              {% else %}
+                {{ subject.professor.email }}
+              {% endif %}
+            </div>
           </div>
+
+          {# Owner can edit title; students see read-only #}
+          {% if request.user.role == 'professor' and request.user.id == subject.professor_id %}
           <div class="btn-group ml-3">
-            <!-- use a light button so it’s visible on blue -->
             <button class="btn btn-sm btn-light mr-1" id="btn-edit-title" onclick="editSubjectName()">
               <i class="fas fa-edit"></i>
             </button>
@@ -41,6 +51,7 @@
               <i class="fas fa-times"></i>
             </button>
           </div>
+          {% endif %}
         </div>
 
         <div class="card-body">
@@ -48,13 +59,24 @@
           <div class="mb-4">
             <label class="form-label font-weight-bold">Description</label>
             <textarea id="subject-description" class="form-control" rows="3" readonly>{{ subject.description }}</textarea>
+
+            {% if request.user.role == 'professor' and request.user.id == subject.professor_id %}
             <div class="mt-2">
               <button class="btn btn-sm btn-outline-primary mr-1" onclick="editDescription()">Edit</button>
               <button class="btn btn-success btn-sm d-none" id="save-description" onclick="saveDescription()">Save</button>
               <button class="btn btn-danger btn-sm d-none" id="cancel-description" onclick="cancelEdit()">Cancel</button>
             </div>
+            {% endif %}
           </div>
-
+          {% if can_unenroll %}
+          <form method="post" action="{% url 'subjects:unenroll_subject' subject.id %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-danger">
+              <i class="fas fa-sign-out-alt"></i> Unenroll
+            </button>
+          </form>
+          <hr>
+        {% endif %}
           <!-- Categories -->
           <h5 class="font-weight-bold mb-3">Categories</h5>
           <ul class="list-group mb-4" id="categories-list">
@@ -63,7 +85,7 @@
                 <div class="d-flex align-items-center w-100">
                   <i class="fas fa-folder text-warning mr-2"></i>
 
-                  <!-- editable input; clicking when readonly navigates -->
+                  <!-- Clicking when readonly navigates -->
                   <input
                     id="category-name-{{ category.id }}"
                     type="text"
@@ -79,8 +101,9 @@
                   {% endif %}
                 </div>
 
-                <div class="btn-group ml-2">
+                {% if request.user.role == 'professor' and request.user.id == subject.professor_id %}
                   {% if category.name not in protected_categories %}
+                  <div class="btn-group ml-2">
                     <button class="btn btn-sm btn-outline-primary mr-1" onclick="editCategoryName({{ category.id }})">
                       <i class="fas fa-edit"></i>
                     </button>
@@ -93,15 +116,17 @@
                     <button class="btn btn-outline-danger btn-sm d-none" id="cancel-category-{{ category.id }}" onclick="cancelCategoryEdit({{ category.id }}, '{{ category.name }}')">
                       <i class="fas fa-times"></i>
                     </button>
+                  </div>
                   {% endif %}
-                </div>
+                {% endif %}
               </li>
             {% empty %}
               <li class="list-group-item text-muted">No categories available.</li>
             {% endfor %}
           </ul>
 
-          <!-- Add category -->
+          <!-- Add category (professor/owner only) -->
+          {% if request.user.role == 'professor' and request.user.id == subject.professor_id %}
           <div class="input-group">
             <input type="text" id="new-category-name" class="form-control" placeholder="New Category Name">
             <div class="input-group-append">
@@ -110,6 +135,7 @@
               </button>
             </div>
           </div>
+          {% endif %}
         </div>
       </div>
     </div>
@@ -164,7 +190,7 @@
     $('#confirmModal').modal('show');
   }
 
-  /* ===== Subject title editing ===== */
+  /* ===== Subject title editing (owner only; buttons hidden for students) ===== */
   function editSubjectName() {
     const input = document.getElementById("subject-name");
     input.readOnly = false;
@@ -203,12 +229,15 @@
     input.readOnly = true;
     input.classList.add("form-control-plaintext", "text-white");
     input.classList.remove("form-control", "bg-white", "text-dark");
-    document.getElementById("save-subject-name").classList.add("d-none");
-    document.getElementById("cancel-subject-name").classList.add("d-none");
-    document.getElementById("btn-edit-title").classList.remove("d-none");
+    const saveBtn = document.getElementById("save-subject-name");
+    const cancelBtn = document.getElementById("cancel-subject-name");
+    const editBtn = document.getElementById("btn-edit-title");
+    if (saveBtn) saveBtn.classList.add("d-none");
+    if (cancelBtn) cancelBtn.classList.add("d-none");
+    if (editBtn) editBtn.classList.remove("d-none");
   }
 
-  /* ===== Description editing ===== */
+  /* ===== Description editing (owner only; buttons hidden for students) ===== */
   function editDescription() {
     const input = document.getElementById("subject-description");
     input.readOnly = false;
@@ -232,8 +261,10 @@
   function cancelEdit() {
     document.getElementById("subject-description").value = "{{ subject.description }}";
     document.getElementById("subject-description").readOnly = true;
-    document.getElementById("save-description").classList.add("d-none");
-    document.getElementById("cancel-description").classList.add("d-none");
+    const saveBtn = document.getElementById("save-description");
+    const cancelBtn = document.getElementById("cancel-description");
+    if (saveBtn) saveBtn.classList.add("d-none");
+    if (cancelBtn) cancelBtn.classList.add("d-none");
   }
 
   /* ===== Category actions ===== */
@@ -285,8 +316,10 @@
     input.classList.remove("form-control-plaintext");
     input.classList.add("form-control", "bg-white");
     input.focus();
-    document.getElementById(`save-category-${id}`).classList.remove("d-none");
-    document.getElementById(`cancel-category-${id}`).classList.remove("d-none");
+    const saveBtn = document.getElementById(`save-category-${id}`);
+    const cancelBtn = document.getElementById(`cancel-category-${id}`);
+    if (saveBtn) saveBtn.classList.remove("d-none");
+    if (cancelBtn) cancelBtn.classList.remove("d-none");
   }
 
   function cancelCategoryEdit(id, originalName) {
@@ -296,8 +329,10 @@
     input.readOnly = true;
     input.classList.add("form-control-plaintext");
     input.classList.remove("form-control", "bg-white");
-    document.getElementById(`save-category-${id}`).classList.add("d-none");
-    document.getElementById(`cancel-category-${id}`).classList.add("d-none");
+    const saveBtn = document.getElementById(`save-category-${id}`);
+    const cancelBtn = document.getElementById(`cancel-category-${id}`);
+    if (saveBtn) saveBtn.classList.add("d-none");
+    if (cancelBtn) cancelBtn.classList.add("d-none");
   }
 
   function saveCategoryName(id) {

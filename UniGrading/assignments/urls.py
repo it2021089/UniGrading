@@ -1,12 +1,15 @@
 from django.urls import path
-from .views import AssignmentCreateView, AssignmentListView, AssignmentDetailView, AssignmentUpdateView, delete_assignment
+from . import views
 
 app_name = "assignments"
 
 urlpatterns = [
-    path('<int:subject_id>/', AssignmentListView.as_view(), name='assignment_list'),
-    path('<int:subject_id>/create/', AssignmentCreateView.as_view(), name='create_assignment'),  
-    path('assignment/<int:pk>/', AssignmentDetailView.as_view(), name='assignment_detail'),
-    path('assignment/<int:pk>/delete/', delete_assignment, name='delete_assignment'),  
-    path('assignment/<int:pk>/edit/', AssignmentUpdateView.as_view(), name='edit_assignment'),  
+    path("<int:subject_id>/", views.AssignmentListView.as_view(), name="assignment_list"),
+    path("<int:subject_id>/create/", views.AssignmentCreateView.as_view(), name="create_assignment"),
+    path("<int:pk>/detail/", views.AssignmentDetailView.as_view(), name="assignment_detail"),
+    path("<int:pk>/edit/", views.AssignmentUpdateView.as_view(), name="edit_assignment"),
+    path("<int:pk>/delete/", views.delete_assignment, name="delete_assignment"),
+
+    path("<int:pk>/submit/", views.submit_assignment, name="submit_assignment"),
+    path("submission/<int:pk>/", views.submission_detail, name="submission_detail"),
 ]
