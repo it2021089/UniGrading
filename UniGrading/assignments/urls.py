@@ -1,3 +1,4 @@
+# assignments/urls.py
 from django.urls import path
 from . import views
 
@@ -9,7 +10,6 @@ urlpatterns = [
     path("<int:pk>/detail/", views.AssignmentDetailView.as_view(), name="assignment_detail"),
     path("<int:pk>/edit/", views.AssignmentUpdateView.as_view(), name="edit_assignment"),
     path("<int:pk>/delete/", views.delete_assignment, name="delete_assignment"),
-
-    path("<int:pk>/submit/", views.submit_assignment, name="submit_assignment"),
-    path("submission/<int:pk>/", views.submission_detail, name="submission_detail"),
+    path("<int:pk>/preview/", views.preview_assignment_file, name="preview_assignment_file"),
+    path("<int:pk>/download/", views.download_assignment_file, name="download_assignment_file"),
 ]

@@ -13,7 +13,7 @@ import mimetypes
 import logging
 from botocore.exceptions import ClientError
 
-from .models import Subject, Category, File, Enrollment   # <-- Enrollment added
+from .models import Subject, Category, File, Enrollment
 from .forms import SubjectForm
 from UniGrading.mixin import BreadcrumbMixin
 
@@ -104,9 +104,9 @@ def enroll_subject(request, pk):
     subject = get_object_or_404(Subject, pk=pk)
     enrollment, created = Enrollment.objects.get_or_create(user=request.user, subject=subject)
     if created:
-        messages.success(request, f"You have enrolled in “{subject.name}”.")
+        messages.success(request, f"You have enrolled in “{subject.name}”.", extra_tags="category")
     else:
-        messages.info(request, f"You’re already enrolled in “{subject.name}”.")
+        messages.info(request, f"You’re already enrolled in “{subject.name}”.", extra_tags="category")
     return redirect("subjects:subject_detail", pk=subject.pk)
 
 @login_required
@@ -115,10 +115,11 @@ def unenroll_subject(request, pk):
     subject = get_object_or_404(Subject, pk=pk)
     deleted, _ = Enrollment.objects.filter(user=request.user, subject=subject).delete()
     if deleted:
-        messages.success(request, f"You have unenrolled from “{subject.name}”.")
+        messages.success(request, f"You have unenrolled from “{subject.name}”.", extra_tags="category")
     else:
-        messages.info(request, f"You weren’t enrolled in “{subject.name}”.")
+        messages.info(request, f"You weren’t enrolled in “{subject.name}”.", extra_tags="category")
     return redirect("subjects:my_subjects")
+
 # --------------------------
 # Create Subject View
 # --------------------------
@@ -146,7 +147,7 @@ class CreateSubjectView(LoginRequiredMixin, CreateView):
 
         # Duplicate check scoped to professor
         if Subject.objects.filter(professor=self.request.user, name__iexact=name).exists():
-            messages.error(self.request, "A subject with this name already exists.")
+            messages.error(self.request, "A subject with this name already exists.", extra_tags="category")
             form.add_error("name", "Duplicate name for your account.")
             return self.render_to_response(self.get_context_data(form=form))
 
@@ -186,13 +187,7 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             (f"Subject: {self.object.name}", self.request.path),
         ]
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context["categories"] = self.object.categories.filter(parent__isnull=True)
-        context["protected_categories"] = ["Courses", "Assignments", "Tests", "Other"]
-        context["breadcrumbs"] = self.get_breadcrumbs()
-        return context
-    
+    # NOTE: you had two get_context_data definitions; keeping one clean version
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["categories"] = self.object.categories.filter(parent__isnull=True)
@@ -202,11 +197,8 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
 
         is_enrolled = self.object.enrollments.filter(user=self.request.user).exists()
         is_owner = (self.object.professor_id == self.request.user.id)
-        can_unenroll = is_enrolled and (
-            self.request.user.role == "student" or not is_owner
-        )
+        can_unenroll = is_enrolled and (self.request.user.role == "student" or not is_owner)
         context["can_unenroll"] = can_unenroll
-
         return context
 
     def post(self, request, *args, **kwargs):
@@ -290,7 +282,6 @@ class SubjectDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             except Category.DoesNotExist:
                 return JsonResponse({"status": "error", "message": "Category not found."})
         
-        
         return redirect(self.request.path)
 
 # --------------------------
@@ -368,10 +359,14 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
         context = super().get_context_data(**kwargs)
         category = self.object
 
+        # ----- OWNER LOGIC (fixes read-only for subject professor) -----
+        is_owner = (getattr(self.request.user, "role", None) == "professor" and
+                    category.subject.professor_id == self.request.user.id)
+
         # Subcategories
         context["subcategories"] = category.subcategories.all()
 
-        # Files with metadata
+        # Files with metadata + per-file permission
         files = []
         for f in category.files.all():
             try:
@@ -388,17 +383,25 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             f.size_kb = size_kb
             f.mimetype = mimetype
             f.is_missing = is_missing
+
+            # allow file uploader to delete their own file, or subject owner to delete any
+            f.can_delete = is_owner or (getattr(f, "uploaded_by_id", None) == self.request.user.id)
+
             files.append(f)
 
         context["files"] = files
         context["breadcrumbs"] = self.get_breadcrumbs()
+        context["is_owner"] = is_owner  # <-- needed by template header/buttons
         return context
 
     def post(self, request, *args, **kwargs):
         category = self.get_object()
         data = request.POST
 
-        # Helpers
+        # ----- Permission helpers -----
+        def is_subject_owner(u) -> bool:
+            return getattr(u, "role", None) == "professor" and category.subject.professor_id == u.id
+
         def jerr(msg, code=400):
             return JsonResponse({"status": "error", "message": msg}, status=code)
 
@@ -408,8 +411,11 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
                 base.update(payload)
             return JsonResponse(base)
 
-        # Create subfolder (AJAX)
+        # ----- Create subfolder (AJAX) -----
         if "new_subcategory" in data:
+            if not is_subject_owner(request.user):
+                return jerr("Not allowed.", code=403)
+
             name = (data.get("new_subcategory") or "").strip()
             if not name:
                 return jerr("Folder name cannot be empty.")
@@ -422,8 +428,11 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             sub = Category.objects.create(subject=category.subject, parent=category, name=name)
             return jok({"id": sub.id, "name": sub.name})
 
-        # Rename subfolder (AJAX)
+        # ----- Rename subfolder (AJAX) -----
         if "update_subcategory" in data:
+            if not is_subject_owner(request.user):
+                return jerr("Not allowed.", code=403)
+
             sub_id = data.get("subcategory_id")
             new_name = (data.get("subcategory_name") or "").strip()
             if not new_name:
@@ -444,8 +453,11 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             sub.save(update_fields=["name"])
             return jok({"id": sub.id, "name": sub.name})
 
-        # Delete subfolder (AJAX)
+        # ----- Delete subfolder (AJAX) -----
         if "delete_subcategory" in data:
+            if not is_subject_owner(request.user):
+                return jerr("Not allowed.", code=403)
+
             sub_id = data.get("subcategory_id")
             try:
                 sub = Category.objects.get(id=sub_id, parent=category)
@@ -458,14 +470,21 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             sub.delete()
             return jok()
 
-        # Upload file (supports AJAX FormData and normal form submission)
+        # ----- Upload file (AJAX or regular) -----
         if "new_file" in request.POST or (
             request.headers.get("X-Requested-With") == "XMLHttpRequest" and "file" in request.FILES
         ):
+            # Only subject owner can upload via this page (keeps UI consistent)
+            if not is_subject_owner(request.user):
+                if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                    return jerr("Not allowed.", code=403)
+                messages.error(request, "You do not have permission to upload here.", extra_tags="category")
+                return redirect(self.request.path)
+
             if "file" not in request.FILES:
                 if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-                    return JsonResponse({"status": "error", "message": "No file provided."}, status=400)
-                messages.error(request, "No file provided.")
+                    return jerr("No file provided.")
+                messages.error(request, "No file provided.", extra_tags="category")
                 return redirect(self.request.path)
 
             uploaded_file = request.FILES["file"]
@@ -477,23 +496,29 @@ class CategoryDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
                     uploaded_by=request.user,
                 )
                 if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-                    return JsonResponse({"status": "success"})
-                messages.success(request, "File uploaded successfully!")
+                    return jok()
+                messages.success(request, "File uploaded successfully!", extra_tags="category")
             except Exception as e:
                 if request.headers.get("X-Requested-With") == "XMLHttpRequest":
-                    return JsonResponse({"status": "error", "message": f"Upload failed: {str(e)}"}, status=500)
-                messages.error(request, f"Upload failed: {str(e)}")
+                    return jerr(f"Upload failed: {str(e)}", code=500)
+                messages.error(request, f"Upload failed: {str(e)}", extra_tags="category")
             return redirect(self.request.path)
 
-        # Delete file (non-AJAX form post)
+        # ----- Delete file (non-AJAX form post) -----
         if "delete_file" in data:
             file_id = data.get("file_id")
             file = get_object_or_404(File, id=file_id, category=category)
+
+            # Subject owner OR uploader can delete
+            if not (is_subject_owner(request.user) or file.uploaded_by_id == request.user.id or request.user.is_superuser):
+                messages.error(request, "You do not have permission to delete this file.", extra_tags="category")
+                return redirect(self.request.path)
+
             try:
                 file.delete()
-                messages.success(request, "File deleted successfully!")
+                messages.success(request, "File deleted successfully!", extra_tags="category")
             except Exception as e:
-                messages.error(request, f"Failed to delete file: {str(e)}")
+                messages.error(request, f"Failed to delete file: {str(e)}", extra_tags="category")
             return redirect(self.request.path)
 
         # Fallback
@@ -521,18 +546,22 @@ def delete_file(request, pk):
     file = get_object_or_404(File, pk=pk)
     logger.info(f"Attempting to delete file {file.name} by user {request.user.username}")
 
-    if request.user != file.uploaded_by and not request.user.is_superuser:
+    # Allow subject owner OR uploader OR superuser
+    is_subject_owner = (getattr(request.user, "role", None) == "professor" and
+                        file.category.subject.professor_id == request.user.id)
+
+    if not (is_subject_owner or request.user == file.uploaded_by or request.user.is_superuser):
         logger.warning("Permission denied for deleting file.")
-        messages.error(request, "You do not have permission to delete this file.")
+        messages.error(request, "You do not have permission to delete this file.", extra_tags="category")
         return redirect('subjects:category_detail', pk=file.category.pk)
 
     try:
         file.delete()
-        messages.success(request, "File deleted successfully.")
+        messages.success(request, "File deleted successfully.", extra_tags="category")
         logger.info("File deleted successfully.")
     except Exception as e:
         logger.error(f"Error deleting file: {e}")
-        messages.error(request, "An error occurred while deleting the file.")
+        messages.error(request, "An error occurred while deleting the file.", extra_tags="category")
     return redirect('subjects:category_detail', pk=file.category.pk)
 
 # --------------------------
@@ -544,22 +573,30 @@ def delete_subcategory(request, pk):
     parent_category_pk = subcategory.parent.pk if subcategory.parent else subcategory.subject.pk
 
     if subcategory.files.exists() or subcategory.subcategories.exists():
-        messages.error(request, "Cannot delete a non-empty folder.")
+        messages.error(request, "Cannot delete a non-empty folder.", extra_tags="category")
         return redirect("subjects:category_detail", pk=parent_category_pk)
 
     try:
         subcategory.delete()
-        messages.success(request, "Folder deleted successfully.")
+        messages.success(request, "Folder deleted successfully.", extra_tags="category")
     except Exception as e:
-        messages.error(request, f"An error occurred while deleting the folder: {e}")
+        messages.error(request, f"An error occurred while deleting the folder: {e}", extra_tags="category")
     return redirect("subjects:category_detail", pk=parent_category_pk)
 
 # --------------------------
 # Download File (Function-Based View)
 # --------------------------
+@login_required  # <-- require login
 @require_GET
 def download_file(request, file_id):
     file_obj = get_object_or_404(File, pk=file_id)
+
+    # Permission: subject owner OR enrolled user
+    subject = file_obj.category.subject
+    is_subject_owner = (getattr(request.user, "role", None) == "professor" and subject.professor_id == request.user.id)
+    is_enrolled = Enrollment.objects.filter(user=request.user, subject=subject).exists()
+    if not (is_subject_owner or is_enrolled or request.user.is_superuser):
+        raise Http404("Not found.")
 
     try:
         content_type, _ = mimetypes.guess_type(file_obj.file.name)
@@ -584,6 +621,13 @@ def download_file(request, file_id):
 @login_required
 def preview_file(request, pk):
     file = get_object_or_404(File, pk=pk)
+
+    # Permission: subject owner OR enrolled user
+    subject = file.category.subject
+    is_subject_owner = (getattr(request.user, "role", None) == "professor" and subject.professor_id == request.user.id)
+    is_enrolled = Enrollment.objects.filter(user=request.user, subject=subject).exists()
+    if not (is_subject_owner or is_enrolled or request.user.is_superuser):
+        raise Http404("Not found.")
 
     try:
         file_handle = file.file.open("rb")

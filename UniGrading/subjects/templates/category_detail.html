@@ -17,15 +17,17 @@
   </nav>
 
   {% if messages %}
-    <div class="container mt-3">
-      {% for message in messages %}
+  <div class="container mt-3">
+    {% for message in messages %}
+      {% if "category" in message.tags %}
         <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
           {{ message }}
           <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
         </div>
-      {% endfor %}
-    </div>
-  {% endif %}
+      {% endif %}
+    {% endfor %}
+  </div>
+{% endif %}
 
   <div class="row justify-content-center">
     <div class="col-md-10">
@@ -116,12 +118,12 @@
                             onclick="safeDownload('{% url 'subjects:download_file' file.pk %}')">
                       <i class="fas fa-download"></i> Download
                     </button>
-                    {% if is_owner %}
-                      <button class="btn btn-sm btn-outline-danger"
-                              onclick="deleteFile({{ file.pk }}, '{{ file.name }}')">
-                        <i class="fas fa-trash-alt"></i>
-                      </button>
-                    {% endif %}
+                    {% if file.can_delete %}
+                    <button class="btn btn-sm btn-outline-danger"
+                            onclick="deleteFile({{ file.pk }}, '{{ file.name }}')">
+                      <i class="fas fa-trash-alt"></i>
+                    </button>
+                  {% endif %}
                   </div>
                 </div>
               </li>

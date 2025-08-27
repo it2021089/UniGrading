@@ -24,34 +24,82 @@
                 <div class="card-header bg-primary text-white">
                     <h4 class="mb-0 text-center">{{ view.object.pk|yesno:"Edit Assignment,Create Assignment" }}</h4>
                 </div>
+
                 <div class="card-body">
+                    {% if form.non_field_errors %}
+                        <div class="alert alert-danger">
+                            {{ form.non_field_errors }}
+                        </div>
+                    {% endif %}
+
                     <form method="POST" enctype="multipart/form-data" novalidate>
                         {% csrf_token %}
 
-                        <!-- Title (Required) -->
+                        <!-- Title -->
                         <div class="form-group mb-4">
-                            <label for="{{ form.title.id_for_label }}" class="form-label">Title <span class="text-danger">*</span></label>
-                            {{ form.title|add_class:"form-control"|attr:"required" }}
+                            <label for="{{ form.title.id_for_label }}" class="form-label">
+                                Title <span class="text-danger">*</span>
+                            </label>
+                            {% if form.title.errors %}
+                                {{ form.title|add_class:"form-control is-invalid"|attr:"required" }}
+                                <div class="invalid-feedback d-block">{{ form.title.errors }}</div>
+                            {% else %}
+                                {{ form.title|add_class:"form-control"|attr:"required" }}
+                            {% endif %}
                         </div>
 
-                        <!-- Description (Required) -->
+                        <!-- Description -->
                         <div class="form-group mb-4">
-                            <label for="{{ form.description.id_for_label }}" class="form-label">Description <span class="text-danger">*</span></label>
-                            {{ form.description|add_class:"form-control"|attr:"required" }}
+                            <label for="{{ form.description.id_for_label }}" class="form-label">
+                                Description <span class="text-danger">*</span>
+                            </label>
+                            {% if form.description.errors %}
+                                {{ form.description|add_class:"form-control is-invalid"|attr:"required" }}
+                                <div class="invalid-feedback d-block">{{ form.description.errors }}</div>
+                            {% else %}
+                                {{ form.description|add_class:"form-control"|attr:"required" }}
+                            {% endif %}
                         </div>
 
-                        <!-- Due Date (Required) -->
+                        <!-- Due Date -->
                         <div class="form-group mb-4">
-                            <label for="{{ form.due_date.id_for_label }}" class="form-label">Due Date <span class="text-danger">*</span></label>
-                            {{ form.due_date|add_class:"form-control"|attr:"required" }}
+                            <label for="{{ form.due_date.id_for_label }}" class="form-label">
+                                Due Date <span class="text-danger">*</span>
+                            </label>
+                            {% if form.due_date.errors %}
+                                {{ form.due_date|add_class:"form-control is-invalid"|attr:"required" }}
+                                <div class="invalid-feedback d-block">{{ form.due_date.errors }}</div>
+                            {% else %}
+                                {{ form.due_date|add_class:"form-control"|attr:"required" }}
+                            {% endif %}
                         </div>
 
-                        <!-- File Upload with Preview Toggle -->
+                        <!-- File Upload (bound field + existing file download link) -->
                         <div class="form-group mb-4">
-                            <label class="form-label">Assignment File</label>
-                            <input type="file" name="file" id="fileInput" class="form-control">
-                            <div id="new-file-warning" class="mt-2 text-muted" style="display: none;">
+                            <label for="{{ form.file.id_for_label }}" class="form-label">Assignment File</label>
+
+                            {% if object.pk and object.file %}
+                                {% with name=object.file_basename|default:object.file.name %}
+                                    <div class="mb-2">
+                                        <a href="{% url 'assignments:download_assignment_file' object.pk %}">
+                                            <i class="fas fa-paperclip"></i> {{ name }}
+                                        </a>
+                                    </div>
+                                {% endwith %}
+                            {% endif %}
+
+                            {% if form.file.errors %}
+                                {{ form.file|add_class:"form-control-file is-invalid" }}
+                                <div class="invalid-feedback d-block">{{ form.file.errors }}</div>
+                            {% else %}
+                                {{ form.file|add_class:"form-control-file" }}
+                            {% endif %}
+
+                            <small class="form-text text-muted">
                                 Uploading a new file will replace the previous one.
+                            </small>
+                            <div id="new-file-warning" class="mt-2 text-muted" style="display:none;">
+                                New file selected — the old file will be replaced on save.
                             </div>
                         </div>
 
@@ -76,17 +124,14 @@
 </div>
 
 <script>
-    document.addEventListener("DOMContentLoaded", function () {
-        const fileInput = document.getElementById("fileInput");
-        const fileWarning = document.getElementById("new-file-warning");
+document.addEventListener("DOMContentLoaded", function () {
+    const fileInput = document.getElementById("{{ form.file.id_for_label }}");
+    const fileWarning = document.getElementById("new-file-warning");
+    if (!fileInput || !fileWarning) return;
 
-        fileInput.addEventListener("change", function () {
-            if (fileInput.files.length > 0) {
-                fileWarning.style.display = "block";
-            } else {
-                fileWarning.style.display = "none";
-            }
-        });
+    fileInput.addEventListener("change", function () {
+        fileWarning.style.display = fileInput.files.length > 0 ? "block" : "none";
     });
+});
 </script>
 {% endblock %}
