@@ -6,173 +6,157 @@
 
 {% block content %}
 <div class="container mt-5">
-    <!-- Breadcrumbs -->
-    <nav aria-label="breadcrumb">
-        <ol class="breadcrumb">
-            {% for name, url in breadcrumbs %}
-                <li class="breadcrumb-item"><a href="{{ url }}">{{ name }}</a></li>
-            {% endfor %}
-        </ol>
-    </nav>
+  <!-- Breadcrumbs -->
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      {% for name, url in breadcrumbs %}
+        <li class="breadcrumb-item"><a href="{{ url }}">{{ name }}</a></li>
+      {% endfor %}
+    </ol>
+  </nav>
 
-    <div class="d-flex justify-content-between mb-3">
-        <h2>{{ subject.name }} - Assignments</h2>
+  <div class="d-flex justify-content-between mb-3">
+    <h2>{{ subject.name }} - Assignments</h2>
 
-        {# Professors: Create button #}
-        {% if user.role == "professor" %}
-            <a href="{% url 'assignments:create_assignment' subject.pk %}" class="btn btn-primary">
-                <i class="fas fa-plus"></i> Create Assignment
-            </a>
-        {% endif %}
-    </div>
+    {# Professors: Create button #}
+    {% if user.role == "professor" %}
+      <a href="{% url 'assignments:create_assignment' subject.pk %}" class="btn btn-primary">
+        <i class="fas fa-plus"></i> Create Assignment
+      </a>
+    {% endif %}
+  </div>
 
-    <!-- Assignment List -->
-    <div class="row">
-        {% for assignment in assignments %}
-            <div class="col-md-4">
-                <div class="card mb-4 shadow-sm">
-                    <div class="card-body">
-                        <h5 class="card-title">{{ assignment.title }}</h5>
-                        <p class="card-text">{{ assignment.description|truncatewords:20 }}</p>
+  <!-- Assignment List -->
+  <div class="row">
+    {% for assignment in assignments %}
+      <div class="col-md-4">
+        <div class="card mb-4 shadow-sm">
+          <div class="card-body">
+            <h5 class="card-title">{{ assignment.title }}</h5>
+            <p class="card-text">{{ assignment.description|truncatewords:20 }}</p>
 
-                        <p class="card-text">
-                            <small class="text-muted">
-                                Professor:
-                                {{ assignment.professor.get_full_name|default:assignment.professor.email }}
-                            </small>
-                        </p>
+            <p class="card-text">
+              <small class="text-muted">
+                Professor: {{ assignment.professor.get_full_name|default:assignment.professor.email }}
+              </small>
+            </p>
 
-                        {# Optional: show student's grade if provided #}
-                        {% if user.role != "professor" and assignment.my_grade_pct is not None %}
-                            <p class="mb-1">
-                                <small><strong>My grade:</strong> {{ assignment.my_grade_pct|floatformat:2 }}%</small>
-                            </p>
-                        {% endif %}
+            {# Optional: show student's grade if provided #}
+            {% if user.role != "professor" and assignment.my_grade_pct is not None %}
+              <p class="mb-1">
+                <small><strong>My grade:</strong> {{ assignment.my_grade_pct|floatformat:2 }}%</small>
+              </p>
+            {% endif %}
 
-                        <p class="card-text text-danger" id="countdown-{{ assignment.pk }}">
-                            Due in: calculating...
-                        </p>
+            <p class="card-text text-danger" id="countdown-{{ assignment.pk }}">
+              Due in: calculating...
+            </p>
 
-                        <div class="d-flex flex-wrap align-items-center">
-                            <a href="{% url 'assignments:assignment_detail' assignment.pk %}" class="btn btn-outline-primary">
-                                View Details
-                            </a>
+            <div class="d-flex flex-wrap align-items-center">
+              <a href="{% url 'assignments:assignment_detail' assignment.pk %}" class="btn btn-outline-primary">
+                View Details
+              </a>
 
-                            {# Professors: Delete button #}
-                            {% if user.role == "professor" %}
-                                <button type="button"
-                                        class="btn btn-outline-danger ml-2 delete-btn"
-                                        data-toggle="modal"
-                                        data-target="#deleteModal"
-                                        data-delete-url="{% url 'assignments:delete_assignment' assignment.pk %}"
-                                        data-assignment-title="{{ assignment.title }}">
-                                    <i class="fas fa-trash-alt"></i> Delete
-                                </button>
-                            {% endif %}
-
-                            {# Students: Submit / Review buttons (deadline-aware) #}
-                            {% if user.role != "professor" %}
-                                {% if assignment.my_submission_id %}
-                                    <a href="{% url 'assignments:submission_detail' assignment.my_submission_id %}"
-                                       class="btn btn-outline-secondary ml-2">
-                                        Review My Submission
-                                    </a>
-                                {% elif assignment.can_submit %}
-                                    <a href="{% url 'assignments:submit_assignment' assignment.pk %}"
-                                       class="btn btn-success ml-2">
-                                        Submit Assignment
-                                    </a>
-                                {% else %}
-                                    <span class="text-muted ml-2"></span>
-                                {% endif %}
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
+              {# Professors: Delete button #}
+              {% if user.role == "professor" %}
+                <button
+                  type="button"
+                  class="btn btn-outline-danger ml-2 delete-btn"
+                  data-toggle="modal"
+                  data-target="#deleteModal"
+                  data-delete-url="{% url 'assignments:delete_assignment' assignment.pk %}"
+                  data-assignment-title="{{ assignment.title }}"
+                >
+                  <i class="fas fa-trash-alt"></i> Delete
+                </button>
+              {% endif %}
             </div>
+          </div>
+        </div>
+      </div>
 
-            <!-- Countdown script for each assignment -->
-            <script>
-                (function () {
-                    const countdownEl = document.getElementById("countdown-{{ assignment.pk }}");
-                    if (!countdownEl) return;
+      <!-- Countdown script for each assignment -->
+      <script>
+        (function () {
+          const countdownEl = document.getElementById("countdown-{{ assignment.pk }}");
+          if (!countdownEl) return;
 
-                    const dueDate = new Date("{{ assignment.due_date|date:'c' }}").getTime();
+          const dueDate = new Date("{{ assignment.due_date|date:'c' }}").getTime();
 
-                    function updateCountdown() {
-                        const now = new Date().getTime();
-                        const distance = dueDate - now;
+          function updateCountdown() {
+            const now = new Date().getTime();
+            const distance = dueDate - now;
 
-                        if (isNaN(dueDate)) {
-                            countdownEl.textContent = "No deadline";
-                            return;
-                        }
+            if (isNaN(dueDate)) {
+              countdownEl.textContent = "No deadline";
+              return;
+            }
 
-                        if (distance <= 0) {
-                            countdownEl.textContent = "Deadline passed!";
-                            return;
-                        }
+            if (distance <= 0) {
+              countdownEl.textContent = "Deadline passed!";
+              return;
+            }
 
-                        const days = Math.floor(distance / (1000 * 60 * 60 * 24));
-                        const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-                        const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
-                        const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+            const days = Math.floor(distance / (1000 * 60 * 60 * 24));
+            const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+            const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
+            const seconds = Math.floor((distance % (1000 * 60)) / 1000);
 
-                        countdownEl.textContent = `Due in: ${days}d ${hours}h ${minutes}m ${seconds}s`;
-                    }
+            countdownEl.textContent = `Due in: ${days}d ${hours}h ${minutes}m ${seconds}s`;
+          }
 
-                    updateCountdown();
-                    setInterval(updateCountdown, 1000);
-                })();
-            </script>
-        {% empty %}
-            <div class="col-12">
-                <p class="text-muted text-center">No assignments available.</p>
-            </div>
-        {% endfor %}
-    </div>
+          updateCountdown();
+          setInterval(updateCountdown, 1000);
+        })();
+      </script>
+    {% empty %}
+      <div class="col-12">
+        <p class="text-muted text-center">No assignments available.</p>
+      </div>
+    {% endfor %}
+  </div>
 </div>
 
 {# Delete Modal — only included for professors #}
 {% if user.role == "professor" %}
 <div class="modal fade" id="deleteModal" tabindex="-1" role="dialog" aria-labelledby="deleteModalLabel" aria-hidden="true">
-    <div class="modal-dialog" role="document">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title" id="deleteModalLabel">Confirm Delete</h5>
-                <button type="button" class="close" data-dismiss="modal" aria-label="Close">
-                    <span aria-hidden="true">&times;</span>
-                </button>
-            </div>
-            <div class="modal-body">
-                Are you sure you want to delete <strong id="assignmentTitle">this assignment</strong>?
-            </div>
-            <div class="modal-footer">
-                <form method="post" id="deleteForm">
-                    {% csrf_token %}
-                    <button type="submit" class="btn btn-danger">Yes, Delete</button>
-                </form>
-                <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
-            </div>
-        </div>
+  <div class="modal-dialog" role="document">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="deleteModalLabel">Confirm Delete</h5>
+        <button type="button" class="close" data-dismiss="modal" aria-label="Close">
+          <span aria-hidden="true">&times;</span>
+        </button>
+      </div>
+      <div class="modal-body">
+        Are you sure you want to delete <strong id="assignmentTitle">this assignment</strong>?
+      </div>
+      <div class="modal-footer">
+        <form method="post" id="deleteForm">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger">Yes, Delete</button>
+        </form>
+        <button type="button" class="btn btn-secondary" data-dismiss="modal">Cancel</button>
+      </div>
     </div>
+  </div>
 </div>
 
 <!-- Delete Modal Script -->
 <script>
-    document.addEventListener("DOMContentLoaded", function () {
-        document.querySelectorAll('.delete-btn').forEach(function (btn) {
-            btn.addEventListener('click', function () {
-                const deleteUrl = this.dataset.deleteUrl;
-                const assignmentTitle = this.dataset.assignmentTitle;
+  document.addEventListener("DOMContentLoaded", function () {
+    document.querySelectorAll('.delete-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        const deleteUrl = this.dataset.deleteUrl;
+        const assignmentTitle = this.dataset.assignmentTitle;
 
-                const form = document.getElementById('deleteForm');
-                form.setAttribute('action', deleteUrl);
+        const form = document.getElementById('deleteForm');
+        form.setAttribute('action', deleteUrl);
 
-                document.getElementById('assignmentTitle').textContent = assignmentTitle;
-            });
-        });
+        document.getElementById('assignmentTitle').textContent = assignmentTitle;
+      });
     });
+  });
 </script>
 {% endif %}
 {% endblock %}

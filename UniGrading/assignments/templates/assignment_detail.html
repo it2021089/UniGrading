@@ -1,6 +1,7 @@
 {% extends 'base.html' %}
 {% load static %}
 {% load view_breadcrumbs %}
+{% load humanize %}
 
 {% block title %}Assignment Detail{% endblock %}
 
@@ -15,9 +16,20 @@
     </ol>
   </nav>
 
+  {% if messages %}
+    <div class="mb-3">
+      {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show" role="alert">
+          {{ message }}
+          <button type="button" class="close" data-dismiss="alert"><span>&times;</span></button>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   <div class="d-flex justify-content-between align-items-center mb-3">
     <h2>{{ assignment.title }}</h2>
-    {% if user == assignment.professor %}
+    {% if can_manage %}
       <div>
         <a href="{% url 'assignments:edit_assignment' assignment.pk %}" class="btn btn-secondary">
           <i class="fas fa-edit"></i> Edit Assignment
@@ -37,7 +49,7 @@
       <p><strong>Professor:</strong> {{ assignment.professor.get_full_name|default:assignment.professor.email }}</p>
 
       {% if assignment.file %}
-        <div class="d-flex align-items-center flex-wrap">
+        <div class="d-flex align-items-center flex-wrap mb-2">
           <strong class="mr-2">File:</strong>
           <span class="mr-3 text-muted">{{ file_basename }}</span>
 
@@ -50,19 +62,130 @@
                href="{{ preview_url }}">
               <i class="fas fa-external-link-alt"></i> Open
             </a>
-            <a class="btn btn-sm btn-outline-success"
-               href="{{ download_url }}">
+            <a class="btn btn-sm btn-outline-success" href="{{ download_url }}">
               <i class="fas fa-download"></i> Download
             </a>
           </div>
         </div>
+
+        {% if can_manage %}
+          <a href="{% url 'assignments:edit_assignment' assignment.pk %}" class="btn btn-outline-primary btn-sm">
+            <i class="fas fa-upload"></i> Replace File
+          </a>
+        {% endif %}
       {% else %}
         <p class="text-muted"><em>No file attached.</em></p>
+        {% if can_manage %}
+          <a href="{% url 'assignments:edit_assignment' assignment.pk %}" class="btn btn-outline-primary btn-sm">
+            <i class="fas fa-upload"></i> Upload File
+          </a>
+        {% endif %}
       {% endif %}
     </div>
   </div>
 
-  <!-- Delete Modal -->
+  {# ---- SUBMISSION AREA (students & non-owner enrolled professors) ---- #}
+  {% if not can_manage and is_enrolled %}
+    {% if my_submission_id %}
+      <div id="submission" class="card no-hover-card mb-4">
+        <div class="card-header bg-light d-flex justify-content-between align-items-center">
+          <strong>Your submission</strong>
+          {% if my_grade_pct is not None %}
+            <span class="badge badge-info">Grade: {{ my_grade_pct|floatformat:2 }}%</span>
+          {% endif %}
+        </div>
+        <div class="card-body">
+
+          <div class="d-flex align-items-center flex-wrap mb-2">
+            <strong class="mr-2">File:</strong>
+            <span class="mr-3 text-muted">{{ my_submission_filename }}</span>
+            <div class="btn-group mb-2">
+              <button class="btn btn-sm btn-outline-info"
+                      onclick="showPreview('{{ my_submission_preview_url|escapejs }}', '{{ my_submission_filename|default:"my-submission"|escapejs }}')">
+                <i class="fas fa-eye"></i> Preview
+              </button>
+              <a class="btn btn-sm btn-outline-success" href="{{ my_submission_download_url }}">
+                <i class="fas fa-download"></i> Download
+              </a>
+            </div>
+          </div>
+
+          {% if my_submission_uploaded_at %}
+            <p class="mb-3">
+              <small class="text-muted">
+                Uploaded: {{ my_submission_uploaded_at|date:"M d, Y H:i" }} ({{ my_submission_uploaded_at|naturaltime }})
+              </small>
+            </p>
+          {% endif %}
+
+          {% if can_submit %}
+            <hr>
+            <p class="mb-2 text-muted">You can replace your submission until the deadline.</p>
+            <form method="post" enctype="multipart/form-data" action="{% url 'assignments:submit_assignment' assignment.pk %}">
+              {% csrf_token %}
+              <div class="form-group">
+                <input type="file" name="file" class="form-control-file" required>
+              </div>
+              <button class="btn btn-primary btn-sm" type="submit">
+                <i class="fas fa-upload"></i> Re-submit
+              </button>
+            </form>
+          {% else %}
+            <p class="text-danger mb-0"><em>Deadline passed — resubmission is disabled.</em></p>
+          {% endif %}
+        </div>
+      </div>
+
+      {# ---- GRADE & COMMENTS CARD ---- #}
+      <div class="card no-hover-card mb-4">
+        <div class="card-header bg-light"><strong>Grade &amp; Comments</strong></div>
+        <div class="card-body">
+          <p class="mb-2">
+            <strong>Grade:</strong>
+            {% if my_grade_pct is not None %}
+              {{ my_grade_pct|floatformat:2 }}%
+            {% else %}
+              <span class="text-muted">Pending…</span>
+            {% endif %}
+          </p>
+          <p class="mb-0">
+            <strong>Comments:</strong><br>
+            {% if my_submission_feedback %}
+              <span class="d-block mt-1">{{ my_submission_feedback|linebreaksbr }}</span>
+            {% else %}
+              <span class="text-muted">No comments yet.</span>
+            {% endif %}
+          </p>
+        </div>
+      </div>
+    {% else %}
+      {% if can_submit %}
+        <div id="submit" class="card no-hover-card mb-4">
+          <div class="card-header bg-light"><strong>Submit your work</strong></div>
+          <div class="card-body">
+            <form method="post" enctype="multipart/form-data" action="{% url 'assignments:submit_assignment' assignment.pk %}">
+              {% csrf_token %}
+              <div class="form-group">
+                <label class="d-block">Upload file</label>
+                <input type="file" name="file" class="form-control-file" required>
+              </div>
+              <button class="btn btn-success" type="submit">
+                <i class="fas fa-upload"></i> Upload & Submit
+              </button>
+              <p class="text-muted mt-2 mb-0">
+                Upload a .zip with your code. You can replace it until the deadline.
+              </p>
+            </form>
+          </div>
+        </div>
+      {% else %}
+        <div class="alert alert-warning">Deadline passed — new submissions are disabled.</div>
+      {% endif %}
+    {% endif %}
+  {% endif %}
+
+  <!-- Delete Modal (owner only) -->
+  {% if can_manage %}
   <div class="modal fade" id="deleteModal" tabindex="-1" role="dialog" aria-labelledby="deleteModalLabel" aria-hidden="true">
     <div class="modal-dialog" role="document">
       <form method="post" action="{% url 'assignments:delete_assignment' assignment.pk %}" class="modal-content">
@@ -79,8 +202,9 @@
       </form>
     </div>
   </div>
+  {% endif %}
 
-  {% if user == assignment.professor %}
+  {% if can_manage %}
     <div class="card no-hover-card">
       <div class="card-header bg-light"><strong>Assignment Actions</strong></div>
       <div class="card-body">
@@ -91,7 +215,7 @@
   {% endif %}
 </div>
 
-<!-- Preview Modal (same UX as subjects) -->
+<!-- Preview Modal -->
 <div class="modal fade" id="previewModal" tabindex="-1" role="dialog" aria-labelledby="previewModalLabel" aria-hidden="true">
   <div class="modal-dialog modal-xl" role="document">
     <div class="modal-content">
@@ -133,7 +257,6 @@
       frame.style.display = 'block';
       $('#previewModal').modal('show');
     } else {
-      // Non-previewable types: just open in new tab; download button is already present
       window.open(previewUrl, '_blank');
     }
   }
