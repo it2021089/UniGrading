@@ -13,11 +13,31 @@ services:
     command: server --console-address ":9001" /data
     restart: unless-stopped
 
+  # Docker daemon (Docker-in-Docker) used to run student code safely in containers
+  dind:
+    image: docker:27-dind
+    container_name: dind
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""          # dev convenience; enable TLS in prod
+    command: ["--host=tcp://0.0.0.0:2375"]
+    volumes:
+      - dind-storage:/var/lib/docker
+    restart: unless-stopped
+
+  # Queue for background jobs (Celery broker/result backend)
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    restart: unless-stopped
+
   unigrading:
     build: .
     container_name: unigrading
     depends_on:
       - minio
+      - dind
+      - redis
     volumes:
       - ./UniGrading:/UniGrading  
     working_dir: /UniGrading
@@ -28,9 +48,64 @@ services:
       AWS_SECRET_ACCESS_KEY: whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS # whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS  <- Linux #Windows -> ecoN8snDkWsunb6D2R5GPe3sRYp3KflOVLgXZ2zd
       AWS_STORAGE_BUCKET_NAME: files
       AWS_S3_ENDPOINT_URL: http://minio:9000
+
+      # ---- Autograder (execution) ----
+      DOCKER_HOST: tcp://dind:2375
+      AUTOGRADER_ENABLE_DOCKER: "1"
+      AUTOGRADER_DISABLE_DOCKER: "0"
+      AUTOGRADER_ENABLE_LOCAL_EXEC: "0"   # keep local exec off for safety
+      AUTOGRADER_TIMEOUT_SEC: "180"
+      AUTOGRADER_MAX_LOG_BYTES: "200000"
+
+      # ---- LLM (optional, for feedback/lenient grading when execution fails) ----
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      # ---- Celery / Redis (background grading) ----
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+
     ports:
       - "8000:8000"  
+    # Optional: faster temp IO during builds/runs
+    tmpfs:
+      - /tmp/autograder:exec
+    restart: unless-stopped
+
+  # Celery worker running the autograder jobs in the background
+  worker:
+    build: .
+    container_name: unigrading-worker
+    depends_on:
+      - redis
+      - dind
+      - minio
+    volumes:
+      - ./UniGrading:/UniGrading
+    working_dir: /UniGrading
+    environment:
+      DJANGO_SETTINGS_MODULE: UniGrading.settings
+
+      # same runtime env as web (needs Docker + S3 + LLM)
+      DOCKER_HOST: tcp://dind:2375
+      AUTOGRADER_ENABLE_DOCKER: "1"
+      AUTOGRADER_DISABLE_DOCKER: "0"
+      AUTOGRADER_ENABLE_LOCAL_EXEC: "0"
+      AUTOGRADER_TIMEOUT_SEC: "180"
+      AUTOGRADER_MAX_LOG_BYTES: "200000"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+      AWS_ACCESS_KEY_ID: zAN5P7ekIrJdORdVtCPF # zAN5P7ekIrJdORdVtCPF <- Linux #Windows -> Dpa10KF1UZygmxyr36HW
+      AWS_SECRET_ACCESS_KEY: whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS # whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS  <- Linux #Windows -> ecoN8snDkWsunb6D2R5GPe3sRYp3KflOVLgXZ2zd
+      AWS_STORAGE_BUCKET_NAME: files
+      AWS_S3_ENDPOINT_URL: http://minio:9000
+
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+
+    command: >
+      sh -c "celery -A UniGrading.celery_app worker -l info --concurrency=1"
     restart: unless-stopped
 
 volumes:
   minio-data:
+  dind-storage:

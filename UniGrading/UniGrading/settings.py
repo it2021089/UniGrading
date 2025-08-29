@@ -207,3 +207,11 @@ LOGGING = {
         "django": {"handlers": ["console"], "level": "INFO", "propagate": True},
     },
 }
+
+# -------------------------
+# Celery/Redis (for autograding)
+# -------------------------
+CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://redis:6379/0")
+CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://redis:6379/0")
+CELERY_TASK_TIME_LIMIT = 300
+CELERY_TASK_SOFT_TIME_LIMIT = 240

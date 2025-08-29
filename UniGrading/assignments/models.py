@@ -5,7 +5,6 @@ from django.utils.text import slugify
 from django.utils import timezone
 from users.models import CustomUser
 from subjects.models import Subject
-from django.conf import settings
 
 
 def assignment_upload_path(instance, filename):
@@ -25,11 +24,10 @@ class Assignment(models.Model):
     due_date = models.DateTimeField()
     file = models.FileField(upload_to=assignment_upload_path, blank=True, null=True)
 
-    # --- Auto-grading config (no unit tests needed) ---
+    # --- Auto-grading config (simple hints; you can ignore in UI if you want) ---
     autograde_enabled = models.BooleanField(default=True)
-    autograde_max_tokens = models.PositiveIntegerField(default=16000)  # LLM input budget hint
+    autograde_max_tokens = models.PositiveIntegerField(default=16000)
     autograde_leniency = models.PositiveIntegerField(default=5)        # 1=strict .. 5=very lenient
-    # weights for combined grade (runtime vs rubric)
     autograde_weight_runtime = models.FloatField(default=0.7)
     autograde_weight_rubric = models.FloatField(default=0.3)
 
@@ -52,7 +50,6 @@ class Assignment(models.Model):
 # ----------------------------
 # Student submissions + AI grade
 # ----------------------------
-
 def submission_upload_path(instance, filename):
     """
     Store submissions under:
@@ -83,9 +80,10 @@ class AssignmentSubmission(models.Model):
         ("failed",  "Failed"),
     ]
     autograde_status = models.CharField(max_length=12, choices=AUTOGRADE_STATUS, default="queued")
-    autograde_report = models.JSONField(blank=True, null=True)  # structured result {language, runtime, rubric, combined}
-    ai_feedback = models.TextField(blank=True)                  # narrative feedback for the student
+    autograde_report = models.JSONField(blank=True, null=True)  # structured result
+    ai_feedback = models.TextField(blank=True)                  # narrative feedback
     runner_logs = models.TextField(blank=True)                  # build/run notes (truncated)
+    graded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = (("assignment", "student"),)
