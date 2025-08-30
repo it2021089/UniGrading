@@ -32,7 +32,7 @@
                         </div>
                     {% endif %}
 
-                    <form method="POST" enctype="multipart/form-data" novalidate>
+                    <form id="assignment-form" method="POST" enctype="multipart/form-data" novalidate>
                         {% csrf_token %}
 
                         <!-- Title -->
@@ -41,10 +41,10 @@
                                 Title <span class="text-danger">*</span>
                             </label>
                             {% if form.title.errors %}
-                                {{ form.title|add_class:"form-control is-invalid"|attr:"required" }}
+                                {% render_field form.title class+="form-control is-invalid" required="required" %}
                                 <div class="invalid-feedback d-block">{{ form.title.errors }}</div>
                             {% else %}
-                                {{ form.title|add_class:"form-control"|attr:"required" }}
+                                {% render_field form.title class+="form-control" required="required" %}
                             {% endif %}
                         </div>
 
@@ -54,28 +54,43 @@
                                 Description <span class="text-danger">*</span>
                             </label>
                             {% if form.description.errors %}
-                                {{ form.description|add_class:"form-control is-invalid"|attr:"required" }}
+                                {% render_field form.description class+="form-control is-invalid" required="required" %}
                                 <div class="invalid-feedback d-block">{{ form.description.errors }}</div>
                             {% else %}
-                                {{ form.description|add_class:"form-control"|attr:"required" }}
+                                {% render_field form.description class+="form-control" required="required" %}
                             {% endif %}
                         </div>
 
-                        <!-- Due Date -->
-                        <div class="form-group mb-4">
+                        <!-- Due Date (local picker -> submit as UTC) -->
+                        <div class="form-group mb-1">
                             <label for="{{ form.due_date.id_for_label }}" class="form-label">
                                 Due Date <span class="text-danger">*</span>
                             </label>
+
+                            {% comment %}
+                            We still use the original bound field. We’ll fill it with LOCAL time for the user,
+                            but right before submit we’ll convert its value to UTC so Django stores UTC.
+                            {% endcomment %}
                             {% if form.due_date.errors %}
-                                {{ form.due_date|add_class:"form-control is-invalid"|attr:"required" }}
+                                {% render_field form.due_date class+="form-control is-invalid" required="required" autocomplete="off" placeholder="DD/MM/YYYY HH:MM" %}
                                 <div class="invalid-feedback d-block">{{ form.due_date.errors }}</div>
                             {% else %}
-                                {{ form.due_date|add_class:"form-control"|attr:"required" }}
+                                {% render_field form.due_date class+="form-control" required="required" autocomplete="off" placeholder="DD/MM/YYYY HH:MM" %}
                             {% endif %}
+
+                            <small class="form-text text-muted d-block mt-1">
+                                Times shown in your timezone:
+                                <span id="tz-label" class="badge badge-light">detecting…</span>
+                                &nbsp;• Will be saved in UTC on the server.
+                            </small>
+
+                            <!-- We’ll also include optional hidden fields for debugging/analytics -->
+                            <input type="hidden" name="client_tz" id="client_tz">
+                            <input type="hidden" name="client_tz_offset_min" id="client_tz_offset_min">
                         </div>
 
-                        <!-- File Upload (bound field + existing file download link) -->
-                        <div class="form-group mb-4">
+                        <!-- File Upload -->
+                        <div class="form-group mb-4 mt-3">
                             <label for="{{ form.file.id_for_label }}" class="form-label">Assignment File</label>
 
                             {% if object.pk and object.file %}
@@ -89,10 +104,10 @@
                             {% endif %}
 
                             {% if form.file.errors %}
-                                {{ form.file|add_class:"form-control-file is-invalid" }}
+                                {% render_field form.file class+="form-control-file is-invalid" %}
                                 <div class="invalid-feedback d-block">{{ form.file.errors }}</div>
                             {% else %}
-                                {{ form.file|add_class:"form-control-file" }}
+                                {% render_field form.file class+="form-control-file" %}
                             {% endif %}
 
                             <small class="form-text text-muted">
@@ -123,15 +138,103 @@
     </div>
 </div>
 
+<!-- Flatpickr (lightweight datetime picker) -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+<script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+
 <script>
-document.addEventListener("DOMContentLoaded", function () {
+(function() {
+  // Helpers
+  function pad(n){return n < 10 ? '0'+n : ''+n;}
+  function fmtDjango(dt) {
+    // "YYYY-MM-DD HH:MM" (no seconds) – what your form expects
+    return dt.getUTCFullYear() + "-" + pad(dt.getUTCMonth()+1) + "-" + pad(dt.getUTCDate())
+           + " " + pad(dt.getUTCHours()) + ":" + pad(dt.getUTCMinutes());
+  }
+  function fmtLocalDisplay(dt) {
+    // "DD/MM/YYYY HH:MM" for the visible input
+    return pad(dt.getDate()) + "/" + pad(dt.getMonth()+1) + "/" + dt.getFullYear()
+           + " " + pad(dt.getHours()) + ":" + pad(dt.getMinutes());
+  }
+  function parseServerValueToDate(val) {
+    // Try to parse whatever Django rendered (could be "YYYY-MM-DD HH:MM[:SS[+ZZ:ZZ]]")
+    // Strategy:
+    // 1) If it parses as Date normally -> trust it.
+    // 2) If it looks like "YYYY-MM-DD HH:MM" (no timezone), treat it as UTC.
+    if (!val) return null;
+    // Replace space with 'T' for ISO leniency
+    const isoGuess = val.replace(' ', 'T');
+    let d = new Date(isoGuess);
+    if (!isNaN(d)) return d;
+    // Manual handle "YYYY-MM-DD HH:MM"
+    const m = val.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+    if (m) {
+      const y = parseInt(m[1],10), M = parseInt(m[2],10)-1, ddd = parseInt(m[3],10),
+            hh = parseInt(m[4],10), mm = parseInt(m[5],10);
+      // treat as UTC
+      return new Date(Date.UTC(y,M,ddd,hh,mm));
+    }
+    return null;
+  }
+
+  document.addEventListener("DOMContentLoaded", function () {
+    // File replace warning
     const fileInput = document.getElementById("{{ form.file.id_for_label }}");
     const fileWarning = document.getElementById("new-file-warning");
-    if (!fileInput || !fileWarning) return;
-
-    fileInput.addEventListener("change", function () {
+    if (fileInput && fileWarning) {
+      fileInput.addEventListener("change", function () {
         fileWarning.style.display = fileInput.files.length > 0 ? "block" : "none";
-    });
-});
+      });
+    }
+
+    const dueInput = document.getElementById("{{ form.due_date.id_for_label }}")
+                     || document.querySelector('input[name="{{ form.due_date.html_name }}"]');
+
+    // Show the user's timezone
+    const tzLabel = document.getElementById("tz-label");
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || "Local time";
+    if (tzLabel) tzLabel.textContent = tz;
+
+    // Save tz info in hidden inputs
+    const tzHidden = document.getElementById("client_tz");
+    const tzOffHidden = document.getElementById("client_tz_offset_min");
+    if (tzHidden) tzHidden.value = tz;
+    if (tzOffHidden) tzOffHidden.value = String(new Date().getTimezoneOffset());
+
+    // Initialize flatpickr in LOCAL time for the user
+    if (dueInput) {
+      // If editing, convert server UTC to local and display it
+      {% if object.pk %}
+        // Render server UTC as ISO 8601
+        const serverUTC = "{{ object.due_date|date:'c' }}"; // e.g., 2025-08-30T12:30:00+00:00
+        const serverDate = new Date(serverUTC);
+        // Convert to local by constructing a local Date with same epoch ms
+        const localFromServer = new Date(serverDate.getTime());
+      {% else %}
+        const localFromServer = null;
+      {% endif %}
+
+      flatpickr(dueInput, {
+        enableTime: true,
+        time_24hr: true,
+        dateFormat: "d/m/Y H:i",   // visible format for user
+        defaultDate: localFromServer || null,
+      });
+
+      // On submit: convert local value -> UTC string for Django
+      const form = document.getElementById("assignment-form");
+      form.addEventListener("submit", function (e) {
+        const fp = dueInput._flatpickr;
+        if (!fp || !fp.selectedDates || !fp.selectedDates[0]) return; // let browser handle required
+        const local = fp.selectedDates[0]; // local Date
+        // Convert to UTC string in the format Django expects
+        const utcNow = new Date(local.getTime() - (local.getTimezoneOffset() * 60000));
+        // Set the input value to UTC (server expects "YYYY-MM-DD HH:MM")
+        dueInput.value = fmtDjango(utcNow);
+      });
+    }
+  });
+})();
 </script>
 {% endblock %}
+    

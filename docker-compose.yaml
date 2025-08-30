@@ -6,8 +6,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     volumes:
       - minio-data:/data
     command: server --console-address ":9001" /data
@@ -23,6 +23,7 @@ services:
     command: ["--host=tcp://0.0.0.0:2375"]
     volumes:
       - dind-storage:/var/lib/docker
+      - grader-shared:/grader-shared   # shared with worker so inner containers can mount files
     restart: unless-stopped
 
   # Queue for background jobs (Celery broker/result backend)
@@ -39,31 +40,34 @@ services:
       - dind
       - redis
     volumes:
-      - ./UniGrading:/UniGrading  
+      - ./UniGrading:/UniGrading
+      - grader-shared:/grader-shared   # optional for web; harmless to mount
     working_dir: /UniGrading
     environment:
       DJANGO_SETTINGS_MODULE: UniGrading.settings
-      DATABASE_URL: ${DATABASE_URL:-/UniGrading/db.sqlite3}  
+      DATABASE_URL: ${DATABASE_URL:-/UniGrading/db.sqlite3}
 
-      # pull secrets/config from .env (not committed)
+      # ---- LLM / OpenAI (from .env) ----
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AUTOGRADER_USE_LLM: ${AUTOGRADER_USE_LLM:-1}
       AUTOGRADER_REQUIRE_LLM: ${AUTOGRADER_REQUIRE_LLM:-1}
       OPENAI_TEXT_MODEL: ${OPENAI_TEXT_MODEL:-gpt-5-mini}
       OPENAI_CODE_MODEL: ${OPENAI_CODE_MODEL:-gpt-5-mini}
 
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID} 
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_STORAGE_BUCKET_NAME: ${AWS_STORAGE_BUCKET_NAME}
-      AWS_S3_ENDPOINT_URL: ${AWS_S3_ENDPOINT_URL}
+      # ---- S3 / MinIO (defaults silence compose warnings) ----
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      AWS_STORAGE_BUCKET_NAME: ${AWS_STORAGE_BUCKET_NAME:-files}
+      AWS_S3_ENDPOINT_URL: ${AWS_S3_ENDPOINT_URL:-http://minio:9000}
 
       # ---- Autograder (execution) ----
       DOCKER_HOST: tcp://dind:2375
       AUTOGRADER_ENABLE_DOCKER: "1"
       AUTOGRADER_DISABLE_DOCKER: "0"
-      AUTOGRADER_ENABLE_LOCAL_EXEC: "0"   
+      AUTOGRADER_ENABLE_LOCAL_EXEC: "0"   # keep local exec off for safety
       AUTOGRADER_TIMEOUT_SEC: "180"
       AUTOGRADER_MAX_LOG_BYTES: "200000"
+      GRADER_SHARED_DIR: /grader-shared   # make autograder write temp files here
 
       # ---- Celery / Redis (background grading) ----
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
@@ -73,12 +77,14 @@ services:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-dev-key}
       DEBUG: ${DEBUG:-1}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-127.0.0.1,localhost,unigrading}
+      TIME_ZONE: ${TIME_ZONE:-UTC}
 
     ports:
-      - "8000:8000"  
-    # Optional: faster temp IO during builds/runs
+      - "8000:8000"
     tmpfs:
       - /tmp/autograder:exec
+    command: >
+      sh -c "python manage.py migrate --noinput && python manage.py runserver 0.0.0.0:8000"
     restart: unless-stopped
 
   # Celery worker running the autograder jobs in the background
@@ -91,6 +97,7 @@ services:
       - minio
     volumes:
       - ./UniGrading:/UniGrading
+      - grader-shared:/grader-shared     # the worker writes temp grading files here
     working_dir: /UniGrading
     environment:
       DJANGO_SETTINGS_MODULE: UniGrading.settings
@@ -102,6 +109,7 @@ services:
       AUTOGRADER_ENABLE_LOCAL_EXEC: "0"
       AUTOGRADER_TIMEOUT_SEC: "180"
       AUTOGRADER_MAX_LOG_BYTES: "200000"
+      GRADER_SHARED_DIR: /grader-shared
 
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       AUTOGRADER_USE_LLM: ${AUTOGRADER_USE_LLM:-1}
@@ -109,10 +117,10 @@ services:
       OPENAI_TEXT_MODEL: ${OPENAI_TEXT_MODEL:-gpt-5-mini}
       OPENAI_CODE_MODEL: ${OPENAI_CODE_MODEL:-gpt-5-mini}
 
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID} 
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY} 
-      AWS_STORAGE_BUCKET_NAME: ${AWS_STORAGE_BUCKET_NAME}
-      AWS_S3_ENDPOINT_URL: ${AWS_S3_ENDPOINT_URL}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-minioadmin}
+      AWS_STORAGE_BUCKET_NAME: ${AWS_STORAGE_BUCKET_NAME:-files}
+      AWS_S3_ENDPOINT_URL: ${AWS_S3_ENDPOINT_URL:-http://minio:9000}
 
       CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
       CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
@@ -121,11 +129,41 @@ services:
       DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-dev-key}
       DEBUG: ${DEBUG:-1}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-127.0.0.1,localhost,unigrading}
+      TIME_ZONE: ${TIME_ZONE:-UTC}
 
     command: >
-      sh -c "celery -A UniGrading.celery_app worker -l info --concurrency=1"
+      sh -c "celery -A UniGrading.celery_app worker -l info --concurrency=1 -E"
+    restart: unless-stopped
+
+  # Celery Beat (periodic scheduler)
+  beat:
+    build: .
+    container_name: unigrading-beat
+    depends_on:
+      - redis
+    volumes:
+      - ./UniGrading:/UniGrading
+    working_dir: /UniGrading
+    environment:
+      DJANGO_SETTINGS_MODULE: UniGrading.settings
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      TIME_ZONE: ${TIME_ZONE:-UTC}
+    command: >
+      sh -c "celery -A UniGrading.celery_app beat -l info"
+    restart: unless-stopped
+
+  # Flower (Celery monitoring) 
+  flower:
+    image: mher/flower:2.0.1
+    depends_on:
+      - redis
+    command: ["celery","--broker=redis://redis:6379/0","flower","--address=0.0.0.0","--port=5555"]
+    ports:
+      - "5555:5555"
     restart: unless-stopped
 
 volumes:
   minio-data:
   dind-storage:
+  grader-shared:

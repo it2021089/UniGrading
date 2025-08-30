@@ -1,28 +1,27 @@
 # assignments/autograder.py
 """
-Universal, lenient autograder that accepts ANY file type (now defaulting to gpt-5-mini):
+Universal, lenient autograder that accepts ANY file type:
 
 - Archives (.zip, .tar.gz, .tgz): unpack, detect languages, try to build/run,
   else static/LLM review.
-- Notebooks (.ipynb / Google Colab): execute offline with nbconvert,
+- Notebooks (.ipynb / Google Colab): execute offline with nbconvert/nbconvert,
   append gentle evaluation cell, grade leniently.
 - Single code files (.py, .sh, .js, .java, .c/.cpp, etc.): run inside Docker
   (if available) or optional local runner; capture output and grade.
 - PDFs / DOCX / TXT / MD: extract text and review with LLM.
 - Images: optional OCR (pytesseract) or metadata-based review.
 
-Fails softly:
-- If runtime sandbox is unavailable, we still do static/LLM review.
-- If **LLM is unavailable or errors**, we DO NOT assign a grade; we return a result
-  that indicates manual review is required (no grade_pct).
+It fails softly: if a capability is missing, it falls back to text review.
 
 Environment flags:
 - AUTOGRADER_DISABLE_DOCKER=1       -> skip docker; try local (unsafe)
 - AUTOGRADER_ENABLE_LOCAL_EXEC=1    -> allow local subprocess fallback
-- AUTOGRADER_USE_LLM=1              -> enable OpenAI-based feedback/grade if OPENAI_API_KEY is set (default on)
+- AUTOGRADER_USE_LLM=1              -> enable OpenAI-based feedback/grade if OPENAI_API_KEY is set
+- OPENAI_MODEL                      -> model name; default "gpt-5-mini"
 - AUTOGRADER_DOCKER_IMAGE_PY        -> override default Python image
-- AUTOGRADER_DOCKER_IMAGE_DS        -> override DS image (for notebooks)
-- OPENAI_CODE_MODEL / OPENAI_TEXT_MODEL -> override model names (default gpt-5-mini for both)
+- AUTOGRADER_DOCKER_IMAGE_DS        -> override data-science image (notebook runner)
+Timeouts are implemented via polling + kill, since docker SDK doesn't accept
+`timeout=` on containers.run.
 """
 
 from __future__ import annotations
@@ -39,6 +38,7 @@ import zipfile
 import tempfile
 import mimetypes
 import subprocess
+import importlib
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -64,17 +64,16 @@ pytesseract = _try_import("pytesseract")
 docker = _try_import("docker")
 
 # --- LLM (OpenAI) ---
-_openai = _try_import("openai")
-# Default to ON if key exists
-USE_LLM = bool(os.getenv("AUTOGRADER_USE_LLM", "1") == "1") and bool(os.getenv("OPENAI_API_KEY"))
-if _openai and USE_LLM:
+USE_LLM = bool(os.getenv("AUTOGRADER_USE_LLM", "0") == "1") and bool(os.getenv("OPENAI_API_KEY"))
+_openai_client = None
+if USE_LLM:
     try:
-        from openai import OpenAI  # modern SDK
-        _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        openai_mod = importlib.import_module("openai")
+        OpenAI = getattr(openai_mod, "OpenAI", None)
+        if OpenAI:
+            _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     except Exception:
         _openai_client = None
-else:
-    _openai_client = None
 
 
 # -----------------------
@@ -86,13 +85,12 @@ def grade_submission(assignment, submission) -> Dict[str, Any]:
     runs best-effort checks, and returns a dict:
       {
         "status": "done" | "partial" | "failed",
-        "grade_pct": float | None,
+        "grade_pct": float,
         "feedback": str,
         "report": {...},     # machine-readable details
         "logs": str          # raw logs for debugging
       }
-    If the LLM is unavailable or errors, we DO NOT assign a grade (grade_pct=None)
-    and return status 'failed' with a friendly message for manual review.
+    Always be lenient in scoring.
     """
     start = time.time()
     logs: List[str] = []
@@ -109,7 +107,7 @@ def grade_submission(assignment, submission) -> Dict[str, Any]:
         logs.append(f"[warn] Failed reading assignment attachment: {e}")
 
     # Download submission into temp file
-    tmp_dir = Path(tempfile.mkdtemp(prefix="autograde_"))
+    tmp_dir = _mktempdir(prefix="autograde_")
     local_path = tmp_dir / "submission.bin"
     try:
         f = submission.file.open("rb")  # storage-agnostic file object
@@ -118,14 +116,7 @@ def grade_submission(assignment, submission) -> Dict[str, Any]:
         f.close()
     except Exception as e:
         logs.append(f"[error] Could not read submission from storage: {e}")
-        return _final(
-            status="failed",
-            grade=None,
-            feedback="Could not read your file from storage.",
-            report=report,
-            logs="\n".join(logs),
-            start=start,
-        )
+        return _final("failed", 0.0, "Could not read your file from storage.", report, "\n".join(logs), start)
 
     # Decide pathway
     name = Path(submission.file.name).name.lower()
@@ -166,14 +157,7 @@ def grade_submission(assignment, submission) -> Dict[str, Any]:
 
     except Exception as e:
         logs.append(f"[error] Pipeline crashed: {e}")
-        res = _final(
-            status="failed",
-            grade=None,
-            feedback="We could not fully analyze your file automatically. It will be reviewed manually.",
-            report=report,
-            logs="\n".join(logs),
-            start=start,
-        )
+        res = _final("failed", 50.0, "We could not fully analyze your file, but awarding generous partial credit. Please check feedback.", report, "\n".join(logs), start)
 
     # Clean
     try:
@@ -181,37 +165,30 @@ def grade_submission(assignment, submission) -> Dict[str, Any]:
     except Exception:
         pass
 
+    # Ensure lenient minimums if non-empty work detected
+    if res["status"] in ("done", "partial") and res.get("grade_pct", 0) < 40 and report.get("detected_work", False):
+        res["logs"] += "\n[policy] Leniency floor applied because work was detected."
+        res["grade_pct"] = max(res.get("grade_pct", 0), 40.0)
+
     return res
 
 
 def apply_result_to_submission(submission, result: Dict[str, Any]) -> None:
-    """
-    Persist the result to the submission model, if fields exist.
-    If result['grade_pct'] is None, we don't write a grade (manual review).
-    """
-    # grade
-    if "grade_pct" in result and result.get("grade_pct") is not None and hasattr(submission, "grade_pct"):
-        try:
-            submission.grade_pct = float(result["grade_pct"])
-        except Exception:
-            pass
-
-    # feedback
+    """Persist the result to the submission model, if fields exist."""
+    if hasattr(submission, "grade_pct"):
+        # Only set grade if present (Celery may decide to hold)
+        grade = result.get("grade_pct", None)
+        submission.grade_pct = float(grade) if grade is not None else None
     if hasattr(submission, "ai_feedback"):
         submission.ai_feedback = str(result.get("feedback", ""))
-
-    # status/report/logs
     if hasattr(submission, "autograde_status"):
-        status = result.get("status", "done")
-        # Map unknown statuses to 'failed' to fit choices
-        if status not in {"queued", "running", "done", "failed"}:
-            status = "failed"
-        submission.autograde_status = status
+        submission.autograde_status = result.get("status", "done")
     if hasattr(submission, "autograde_report"):
         try:
-            submission.autograde_report = json.dumps(result.get("report", {}))
+            # If model field is JSONField, we can assign dict; if TextField use json.dumps.
+            submission.autograde_report = result.get("report", {})
         except Exception:
-            submission.autograde_report = "{}"
+            submission.autograde_report = {}
     if hasattr(submission, "runner_logs"):
         submission.runner_logs = str(result.get("logs", ""))
 
@@ -294,11 +271,12 @@ def _handle_notebook(tmp_dir: Path, notebook_path: Path | str, filename: str, sp
     if not sourced:
         shutil.copy2(notebook_path, nb_in)
 
-    # Append gentle eval cell?
-    eval_note = "\n# Evaluation cell (auto-appended). Provide outputs the spec expects; keep prints concise."
+    # Append gentle eval cell
     try:
         nb = nbformat.read(nb_in, as_version=4)
-        nb.cells.append(nbformat.v4.new_code_cell(f"# Autograder hint:{eval_note}\nprint('OK')"))
+        nb.cells.append(nbformat.v4.new_code_cell(
+            "# Auto-eval cell (appended by autograder)\nprint('OK')"
+        ))
         nbformat.write(nb, nb_in)
     except Exception as e:
         logs.append(f"[warn] Could not append eval cell: {e}")
@@ -330,7 +308,12 @@ def _handle_notebook(tmp_dir: Path, notebook_path: Path | str, filename: str, sp
         # LLM lenient scoring
         text_for_llm = f"NOTEBOOK OUTPUT/LOGS:\n{out_text}\n\nRUN LOG TAIL:\n{logs[-1] if logs else ''}"
         res = _llm_grade_textual(text_for_llm, spec_text, spec_attach, context={"type": "ipynb-exec"}, logs=logs, report=report)
-        # bonus notes moved out since grade may be withheld if LLM is unavailable
+        # Bonus if ran to completion
+        if cp.returncode == 0:
+            res["grade_pct"] = min(100.0, res.get("grade_pct", 0) + 10)
+            res["feedback"] = (res.get("feedback", "") + "\n\nBonus: notebook executed without errors.").strip()
+        else:
+            res["feedback"] = (res.get("feedback", "") + "\n\nNote: execution had errors; we still graded leniently.").strip()
         return res
     except Exception as e:
         logs.append(f"[warn] Notebook execution failed: {e}")
@@ -348,6 +331,15 @@ def _handle_single_code(tmp_dir: Path, local_path: Path, filename: str, spec_tex
     context = {"type": f"single-{lang or 'code'}"}
     text_for_llm = f"RUNTIME OUTPUT TAIL:\n{run_logs[-2000:]}"
     res = _llm_grade_textual(text_for_llm, spec_text, spec_attach, context=context, logs=logs, report=report)
+    if ran and ok:
+        res["grade_pct"] = max(res.get("grade_pct", 0), 75.0)
+        res["feedback"] = (res.get("feedback", "") + "\n\nProgram ran successfully.").strip()
+    elif ran and not ok:
+        res["feedback"] = (res.get("feedback", "") + "\n\nProgram executed with errors; graded leniently.").strip()
+        res["grade_pct"] = max(res.get("grade_pct", 0), 60.0)
+    else:
+        res["feedback"] = (res.get("feedback", "") + "\n\nCould not execute; static/LLM review only.").strip()
+        res["grade_pct"] = max(res.get("grade_pct", 0), 55.0)
     return res
 
 
@@ -359,11 +351,17 @@ def _build_and_run_project(workdir: Path, lang: str, spec_text: str, spec_attach
     ran, ok, run_logs = _run_project_in_sandbox(workdir, lang, timeout=180)
     logs.append(run_logs[-4000:])
     context = {"type": f"project-{lang}"}
-    text_for_llm = (
-        f"BUILD/RUN LOGS TAIL:\n{run_logs[-2500:]}\n\nFILE TREE (first 3000 lines):\n"
-        + "\n".join(report.get("file_tree", [])[:3000])
-    )
+    text_for_llm = f"BUILD/RUN LOGS TAIL:\n{run_logs[-2500:]}\n\nFILE TREE (first 3000 lines):\n" + "\n".join(report.get("file_tree", [])[:3000])
     res = _llm_grade_textual(text_for_llm, spec_text, spec_attach, context=context, logs=logs, report=report)
+    if ran and ok:
+        res["grade_pct"] = max(res.get("grade_pct", 0), 80.0)
+        res["feedback"] = (res.get("feedback", "") + "\n\nProject built and ran.").strip()
+    elif ran and not ok:
+        res["feedback"] = (res.get("feedback", "") + "\n\nBuild/run issues; graded leniently.").strip()
+        res["grade_pct"] = max(res.get("grade_pct", 0), 65.0)
+    else:
+        res["feedback"] = (res.get("feedback", "") + "\n\nCould not build/run; static review only.").strip()
+        res["grade_pct"] = max(res.get("grade_pct", 0), 55.0)
     return res
 
 
@@ -384,6 +382,8 @@ def _list_files(root: Path) -> List[str]:
         except Exception:
             rel = str(p)
         paths.append(rel)
+        if len(paths) > 5000:
+            break
     paths.sort()
     return paths
 
@@ -457,33 +457,96 @@ def _run_project_in_sandbox(workdir: Path, lang: str, timeout: int = 180):
     return ran, ok, logs
 
 
-# ---- Docker runners (simplified) ----
+# ---- Docker runners (fixed timeouts; no invalid kwargs) ----
+def _poll_wait_or_kill(container, timeout: int) -> bool:
+    """
+    Poll container status up to `timeout` seconds; kill on timeout.
+    Return True if exit code == 0, else False.
+    """
+    start = time.time()
+    try:
+        while True:
+            container.reload()
+            state = container.attrs.get("State", {})
+            status = state.get("Status")
+            if status in ("exited", "dead"):
+                exit_code = state.get("ExitCode", 1)
+                return int(exit_code or 1) == 0
+            if time.time() - start > timeout:
+                try:
+                    container.kill()
+                except Exception:
+                    pass
+                return False
+            time.sleep(1.0)
+    except Exception:
+        try:
+            container.kill()
+        except Exception:
+            pass
+        return False
+
+
 def _docker_run_single(path: Path, lang: Optional[str], timeout: int):
     client = docker.from_env()
-    mounts = {str(path.parent): {"bind": "/work", "mode": "ro"}}
+    volumes = {str(path.parent): {"bind": "/work", "mode": "ro"}}
     cmd = _lang_cmd_single("/work/" + path.name, lang)
     image = _choose_image_for_lang(lang)
-    logs = client.containers.run(
-        image, cmd, detach=False, remove=True, working_dir="/work",
-        network_disabled=True, mem_limit="512m", stderr=True, stdout=True,
-        nano_cpus=1_000_000_000, volumes=mounts, timeout=timeout
+
+    container = client.containers.run(
+        image,
+        cmd,
+        detach=True,
+        working_dir="/work",
+        network_mode="none",
+        mem_limit="512m",
+        nano_cpus=1_000_000_000,
+        volumes=volumes,
     )
-    text = logs.decode("utf-8", errors="ignore")
-    return True, True, text  # consider success if container ran; exit code check omitted for brevity
+    try:
+        ok = _poll_wait_or_kill(container, timeout)
+    finally:
+        try:
+            logs = container.logs(stdout=True, stderr=True, tail=10000).decode("utf-8", "ignore")
+        except Exception:
+            logs = ""
+        try:
+            container.remove(force=True)
+        except Exception:
+            pass
+
+    return True, ok, logs
 
 
 def _docker_run_project(workdir: Path, lang: str, timeout: int):
     client = docker.from_env()
-    mounts = {str(workdir): {"bind": "/work", "mode": "rw"}}
+    volumes = {str(workdir): {"bind": "/work", "mode": "rw"}}
     cmd = _lang_cmd_project(lang)
     image = _choose_image_for_lang(lang, project=True)
-    logs = client.containers.run(
-        image, cmd, detach=False, remove=True, working_dir="/work",
-        network_disabled=True, mem_limit="1g", stderr=True, stdout=True,
-        nano_cpus=2_000_000_000, volumes=mounts, timeout=timeout
+
+    container = client.containers.run(
+        image,
+        cmd,
+        detach=True,
+        working_dir="/work",
+        network_mode="none",
+        mem_limit="1g",
+        nano_cpus=2_000_000_000,
+        volumes=volumes,
     )
-    text = logs.decode("utf-8", errors="ignore")
-    return True, True, text
+    try:
+        ok = _poll_wait_or_kill(container, timeout)
+    finally:
+        try:
+            logs = container.logs(stdout=True, stderr=True, tail=20000).decode("utf-8", "ignore")
+        except Exception:
+            logs = ""
+        try:
+            container.remove(force=True)
+        except Exception:
+            pass
+
+    return True, ok, logs
 
 
 def _choose_image_for_lang(lang: Optional[str], project: bool=False) -> str:
@@ -516,7 +579,9 @@ def _lang_cmd_single(file_in_container: str, lang: Optional[str]) -> List[str]:
     if lang == "bash" or file_in_container.endswith(".sh"):
         return ["bash", file_in_container]
     if lang == "node" or file_in_container.endswith((".js", ".ts")):
+        # naive ts via ts-node could be added; here assume JS
         return ["node", file_in_container]
+    # others could be compiled first; keep simple:
     return ["sh", "-lc", f"echo 'No direct runner for {file_in_container}' && false"]
 
 
@@ -560,12 +625,18 @@ def _local_run_project(workdir: Path, lang: str, timeout: int):
 # -----------------------
 def _extract_text_from_arbitrary_file(django_file, logs: List[str]) -> str:
     """
-    Reads a Django FileField and saves into a temp file to reuse extractors.
+    Reads a Django FileField without touching local fs (for small texts) if possible.
+    Otherwise downloads to temp and routes via helpers.
     """
     name = Path(django_file.name).name.lower()
     mt = mimetypes.guess_type(name)[0] or ""
-    # Save to temp
-    tmp_path = Path(tempfile.mkdtemp(prefix="spec_")) / name
+    try:
+        django_file.open("rb").close()  # probe availability
+    except Exception as e:
+        logs.append(f"[warn] Could not peek attachment: {e}")
+        return ""
+
+    tmp_path = _mktempdir(prefix="spec_") / name
     try:
         f = django_file.open("rb")
         with open(tmp_path, "wb") as out:
@@ -580,7 +651,7 @@ def _extract_text_from_arbitrary_file(django_file, logs: List[str]) -> str:
             return _extract_text_from_pdf(tmp_path, logs)
         if name.endswith(".docx") or "word" in mt:
             return _extract_text_from_docx(tmp_path, logs)
-        if name.endswith(".txt") or name.endswith(".md") or (mt and mt.startswith("text/")):
+        if name.endswith(".txt") or name.endswith(".md") or mt.startswith("text/"):
             return _safe_read_text(tmp_path, logs)
     finally:
         try:
@@ -607,8 +678,7 @@ def _extract_text_from_docx(path: Path | str, logs: List[str]) -> str:
         logs.append("[info] python-docx not installed; cannot parse DOCX.")
         return ""
     try:
-        import docx as _docx
-        doc = _docx.Document(str(path))
+        doc = docx.Document(str(path))
         return "\n".join(p.text for p in doc.paragraphs)
     except Exception as e:
         logs.append(f"[warn] DOCX parse failed: {e}")
@@ -706,25 +776,17 @@ def _llm_grade_textual(student_text: str, spec_text: str, spec_attach: str, cont
                        logs: List[str], report: Dict[str, Any]) -> Dict[str, Any]:
     """
     Grade based on available text: code logs, extracted text, readme, notebook output, etc.
-    If NO LLM available or call fails: DO NOT assign a numeric grade (manual review).
+    If no LLM available, use a simple heuristic that yields a kind, partial grade.
     """
-    # Detect that some work exists
+    # Simple signals
     length = len(student_text or "")
     detected_work = length > 0 or bool(spec_attach)
     report["detected_work"] = report.get("detected_work", False) or detected_work
 
-    # If no LLM client, return manual review (no grade)
-    if not (_openai_client and USE_LLM):
-        feedback = (
-            "Automatic grading is temporarily unavailable. "
-            "We captured your submission content and runtime logs (if any). "
-            "An instructor will review it manually."
-        )
-        return _final("failed", None, feedback, report, "\n".join(logs), time.time(), already_started=True)
-
-    # Try the LLM
-    try:
-        prompt = f"""
+    if _openai_client and USE_LLM:
+        try:
+            report["llm_used"] = True
+            prompt = f"""
 Grading context: {json.dumps(context)}
 Assignment description (may be vague): 
 <<<
@@ -744,39 +806,49 @@ Student submission content / logs / text snapshot:
 Your tasks:
 1) Briefly summarize what the student attempted and whether it meets the core requirements.
 2) List 3–6 specific, constructive suggestions for improvement (be kind).
-3) Give a LENIENT numeric grade 0–100 (float), prioritizing core correctness; small issues have minimal impact.
+3) Give a LENIENT numeric grade 0–100 (float), prioritizing core correctness; small issues should have minimal impact.
 Return strict JSON with keys: summary, suggestions (array), grade_pct (float).
 """
-        resp = _openai_client.chat.completions.create(
-            model=_choose_model_for_context(context),
-            messages=[
-                {"role": "system", "content": LENIENT_SYSTEM},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.2,
-        )
-        text = resp.choices[0].message.content or ""
-        data = _extract_json(text)
-        grade = float(data.get("grade_pct"))
-        feedback = f"{data.get('summary','')}\n\nSuggestions:\n- " + "\n- ".join(data.get("suggestions", []))
-        return _final("done", _clamp(grade), feedback, report, "\n".join(logs), time.time(), already_started=True)
-    except Exception as e:
-        logs.append(f"[warn] LLM call failed: {e}")
-        feedback = (
-            "We could not complete automatic grading due to a service error. "
-            "Your submission has been saved and will be reviewed manually."
-        )
-        return _final("failed", None, feedback, report, "\n".join(logs), time.time(), already_started=True)
+            resp = _openai_client.chat.completions.create(
+                model=_choose_model_for_context(context),
+                messages=[
+                    {"role": "system", "content": LENIENT_SYSTEM},
+                    {"role": "user", "content": prompt}
+                ],
+                # IMPORTANT: omit temperature to satisfy models that only support the default
+            )
+            text = resp.choices[0].message.content or ""
+            data = _extract_json(text)
+            grade = float(data.get("grade_pct", 75.0))
+            feedback = f"{data.get('summary','')}\n\nSuggestions:\n- " + "\n- ".join(data.get("suggestions", []))
+            return _final("done", _clamp(grade), feedback, report, "\n".join(logs), time.time())
+        except Exception as e:
+            report["llm_used"] = False
+            report["llm_error"] = str(e)
+            logs.append(f"[warn] LLM call failed: {e}")
+
+    # Fallback heuristic
+    base = 70.0 if detected_work else 10.0
+    if length > 2000:
+        base += 10
+    feedback = (
+        "Automated lenient review:\n"
+        "- We detected content and attempted to match it to the assignment.\n"
+        "- This is a helpful estimate; final grade may be adjusted by your professor.\n"
+        "- If anything seems off, please contact your professor."
+    )
+    return _final("partial" if detected_work else "failed", _clamp(base), feedback, report, "\n".join(logs), time.time())
 
 
 def _choose_model_for_context(context: Dict[str, Any]) -> str:
     """
-    Route to a single model: gpt-5-mini for everything (overridable by env).
+    Default to a single model for simplicity; can be overridden by env.
     """
-    return os.getenv("OPENAI_CODE_MODEL", os.getenv("OPENAI_TEXT_MODEL", "gpt-5-mini"))
+    return os.getenv("OPENAI_MODEL", "gpt-5-mini")
 
 
 def _extract_json(text: str) -> Dict[str, Any]:
+    # try to find {...}
     m = re.search(r"\{.*\}", text, flags=re.S)
     if not m:
         return {}
@@ -789,17 +861,28 @@ def _extract_json(text: str) -> Dict[str, Any]:
 def _clamp(x: float, a: float = 0.0, b: float = 100.0) -> float:
     return max(a, min(b, x))
 
+def _mktempdir(prefix: str = "autograde_") -> Path:
+    """Create a temp directory, preferring the shared directory if writable."""
+    shared = os.getenv("AUTOGRADER_SHARED_DIR", "/grader_shared")
+    try:
+        base = Path(shared)
+        base.mkdir(parents=True, exist_ok=True)
+        if os.access(base, os.W_OK):
+            return Path(tempfile.mkdtemp(prefix=prefix, dir=str(base)))
+    except Exception:
+        pass
+    return Path(tempfile.mkdtemp(prefix=prefix))
 
 # -----------------------
 # Finalize
 # -----------------------
-def _final(status: str, grade: Optional[float], feedback: str, report: Dict[str, Any], logs: str, start: float, already_started: bool=False) -> Dict[str, Any]:
+def _final(status: str, grade: float, feedback: str, report: Dict[str, Any], logs: str, start: float) -> Dict[str, Any]:
     return {
         "status": status,
-        "grade_pct": None if grade is None else _clamp(float(grade)),
+        "grade_pct": _clamp(grade),
         "feedback": feedback.strip(),
         "report": report,
         "logs": logs,
         "finished_at": timezone.now().isoformat(),
-        "elapsed_s": (time.time() - start)
+        "elapsed_s": max(0.0, time.time() - start),
     }

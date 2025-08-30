@@ -24,12 +24,15 @@ class Assignment(models.Model):
     due_date = models.DateTimeField()
     file = models.FileField(upload_to=assignment_upload_path, blank=True, null=True)
 
-    # --- Auto-grading config (no unit tests needed) ---
+    # --- Auto-grading config ---
     autograde_enabled = models.BooleanField(default=True)
-    autograde_max_tokens = models.PositiveIntegerField(default=16000)  # hint; actual truncation done by autograder
+    autograde_max_tokens = models.PositiveIntegerField(default=16000)  # LLM input budget hint
     autograde_leniency = models.PositiveIntegerField(default=5)        # 1=strict .. 5=very lenient
     autograde_weight_runtime = models.FloatField(default=0.7)
     autograde_weight_rubric = models.FloatField(default=0.3)
+    autograde_done_at = models.DateTimeField(null=True, blank=True)
+    # Beat will enqueue once when due_date passes (flag prevents duplicates)
+    autograde_job_scheduled = models.BooleanField(default=False)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -70,19 +73,20 @@ class AssignmentSubmission(models.Model):
     file = models.FileField(upload_to=submission_upload_path)
     submitted_at = models.DateTimeField(default=timezone.now)
 
-    # numeric grade (0..100) — may be NULL when awaiting manual review
+    # numeric grade (0..100)
     grade_pct = models.FloatField(null=True, blank=True)
 
     # --- AI grading state ---
     AUTOGRADE_STATUS = [
-        ("queued",  "Queued"),
-        ("running", "Running"),
-        ("done",    "Done"),
-        ("failed",  "Failed"),  # also used for "manual review required"
+        ("queued",        "Queued"),
+        ("running",       "Running"),
+        ("done",          "Done"),
+        ("failed",        "Failed"),
+        ("await_manual",  "Await manual review"),
     ]
     autograde_status = models.CharField(max_length=12, choices=AUTOGRADE_STATUS, default="queued")
     autograde_report = models.JSONField(blank=True, null=True)  # structured result
-    ai_feedback = models.TextField(blank=True)                  # narrative feedback for the student
+    ai_feedback = models.TextField(blank=True)                  # narrative feedback
     runner_logs = models.TextField(blank=True)                  # build/run notes (truncated)
 
     class Meta:

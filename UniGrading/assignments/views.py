@@ -2,6 +2,7 @@
 from pathlib import Path
 import logging
 import mimetypes
+from zoneinfo import ZoneInfo
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
@@ -30,14 +31,6 @@ except Exception:
     AssignmentSubmission = None  # type: ignore
     HAS_SUBMISSIONS = False
 
-# Autograder
-try:
-    from .autograder import grade_submission, apply_result_to_submission  # type: ignore
-    HAS_AUTOGRADER = True
-except Exception as _e:
-    logger.warning("Autograder unavailable: %s", _e)
-    HAS_AUTOGRADER = False
-
 
 # -----------------------
 # Permission helpers
@@ -48,6 +41,26 @@ def _is_owner_prof(user, subject: Subject) -> bool:
 
 def _is_enrolled(user, subject: Subject) -> bool:
     return Enrollment.objects.filter(user=user, subject=subject).exists()
+
+
+# -----------------------
+# Due date helper: respect client (browser) timezone if provided.
+# Add a hidden input named "client_tz" (e.g., "America/New_York") in your form template.
+# -----------------------
+def _normalize_due_with_client_tz(request, naive_dt):
+    if not naive_dt:
+        return naive_dt
+    if timezone.is_aware(naive_dt):
+        return naive_dt
+    client_tz = request.POST.get("client_tz") or request.GET.get("client_tz")
+    if client_tz:
+        try:
+            aware = naive_dt.replace(tzinfo=ZoneInfo(client_tz))
+            return aware.astimezone(timezone.utc)
+        except Exception:
+            pass
+    # fallback: server TIME_ZONE -> UTC
+    return timezone.make_aware(naive_dt).astimezone(timezone.utc)
 
 
 # -----------------------
@@ -142,7 +155,11 @@ class AssignmentCreateView(LoginRequiredMixin, BreadcrumbMixin, CreateView):
     def form_valid(self, form):
         form.instance.professor = self.request.user
         form.instance.subject = self.subject
-        return super().form_valid(form)
+        # normalize due_date using client's tz if supplied
+        form.instance.due_date = _normalize_due_with_client_tz(self.request, form.cleaned_data.get("due_date"))
+        resp = super().form_valid(form)
+        # nothing is enqueued now; Celery Beat will pick it up when due_date <= now
+        return resp
 
     def get_success_url(self):
         return reverse_lazy("assignments:assignment_list", kwargs={"subject_id": self.subject.pk})
@@ -187,12 +204,12 @@ class AssignmentDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             ctx["can_submit"] = a.due_date > timezone.now() and ctx["is_enrolled"]
             if HAS_SUBMISSIONS:
                 s = AssignmentSubmission.objects.filter(assignment=a, student=u).only(
-                    "id", "grade_pct", "submitted_at", "file", "ai_feedback"
+                    "id", "grade_pct", "submitted_at", "file"
                 ).first()
                 if s:
                     ctx["my_submission_id"] = s.id
                     ctx["my_grade_pct"] = getattr(s, "grade_pct", None)
-                    ctx["my_submission_feedback"] = getattr(s, "ai_feedback", None)
+                    ctx["my_submission_feedback"] = getattr(s, "ai_feedback", None) or getattr(s, "feedback", None)
                     ctx["my_submission_filename"] = (
                         Path(getattr(s.file, "name", "")).name if getattr(s, "file", None) else ""
                     )
@@ -222,6 +239,19 @@ class AssignmentUpdateView(LoginRequiredMixin, BreadcrumbMixin, UpdateView):
             return redirect("assignments:assignment_detail", pk=obj.pk)
         return super().dispatch(request, *args, **kwargs)
 
+    def form_valid(self, form):
+        obj = self.get_object()
+        old_due = obj.due_date
+        # normalize due_date using client's tz if supplied
+        form.instance.due_date = _normalize_due_with_client_tz(self.request, form.cleaned_data.get("due_date"))
+        resp = super().form_valid(form)
+        self.object.refresh_from_db()
+        # If due date changed, let Beat enqueue again at the new time
+        if self.object.autograde_enabled and self.object.due_date != old_due:
+            self.object.autograde_job_scheduled = False
+            self.object.save(update_fields=["autograde_job_scheduled"])
+        return resp
+
     def get_success_url(self):
         return reverse_lazy("assignments:assignment_detail", kwargs={"pk": self.object.pk})
 
@@ -242,6 +272,96 @@ class AssignmentUpdateView(LoginRequiredMixin, BreadcrumbMixin, UpdateView):
             (a.title, reverse_lazy("assignments:assignment_detail", kwargs={"pk": a.pk})),
             ("Edit", self.request.path),
         ]
+
+
+# -------- NEW: submissions list & detail (owner professor) --------
+class AssignmentSubmissionsListView(LoginRequiredMixin, BreadcrumbMixin, ListView):
+    """
+    Owner professor can list all submissions for an assignment.
+    """
+    template_name = "assignment_submissions.html"
+    context_object_name = "submissions"
+
+    def get_queryset(self):
+        self.assignment = get_object_or_404(Assignment, pk=self.kwargs["pk"])
+        if not _is_owner_prof(self.request.user, self.assignment.subject):
+            raise Http404("Not found.")
+        if not HAS_SUBMISSIONS:
+            return []
+        return (
+            AssignmentSubmission.objects
+            .filter(assignment=self.assignment)
+            .select_related("student")
+            .order_by("-submitted_at")
+        )
+
+    def get_breadcrumbs(self):
+        a = self.assignment
+        return [
+            ("Dashboard", DASHBOARD_URL),
+            ("My Subjects", reverse_lazy("subjects:my_subjects")),
+            (a.subject.name, reverse_lazy("subjects:subject_detail", kwargs={"pk": a.subject.pk})),
+            ("Assignments", reverse_lazy("assignments:assignment_list", kwargs={"subject_id": a.subject.pk})),
+            (a.title, reverse_lazy("assignments:assignment_detail", kwargs={"pk": a.pk})),
+            ("Submissions", self.request.path),
+        ]
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["assignment"] = self.assignment
+        ctx["subject"] = self.assignment.subject
+        ctx["can_manage"] = True
+        ctx["breadcrumbs"] = self.get_breadcrumbs()
+        return ctx
+
+
+class AssignmentSubmissionDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
+    """
+    Owner professor OR the submitting student (or superuser) can view a single submission.
+    """
+    template_name = "assignment_submission_detail.html"
+    context_object_name = "submission"
+
+    def get_object(self):
+        if not HAS_SUBMISSIONS:
+            raise Http404("Not found.")
+        sub = get_object_or_404(AssignmentSubmission, pk=self.kwargs["pk"])
+        u = self.request.user
+        owner = _is_owner_prof(u, sub.assignment.subject)
+        if not (owner or u.is_superuser or sub.student_id == getattr(u, "id", None)):
+            raise Http404("Not found.")
+        return sub
+
+    def get_breadcrumbs(self):
+        s = self.object
+        a = s.assignment
+        return [
+            ("Dashboard", DASHBOARD_URL),
+            ("My Subjects", reverse_lazy("subjects:my_subjects")),
+            (a.subject.name, reverse_lazy("subjects:subject_detail", kwargs={"pk": a.subject.pk})),
+            ("Assignments", reverse_lazy("assignments:assignment_list", kwargs={"subject_id": a.subject.pk})),
+            (a.title, reverse_lazy("assignments:assignment_detail", kwargs={"pk": a.pk})),
+            ("Submissions", reverse_lazy("assignments:assignment_submissions", kwargs={"pk": a.pk})),
+            (f"{s.student.get_full_name() or s.student.email}", self.request.path),
+        ]
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        s = ctx["submission"]
+        a = s.assignment
+        ctx["assignment"] = a
+        ctx["subject"] = a.subject
+        ctx["can_manage"] = _is_owner_prof(self.request.user, a.subject)
+        ctx["breadcrumbs"] = self.get_breadcrumbs()
+        # file links
+        ctx["preview_url"] = reverse("assignments:preview_submission_file", kwargs={"pk": s.pk})
+        ctx["download_url"] = reverse("assignments:download_submission_file", kwargs={"pk": s.pk})
+        # filename
+        try:
+            ctx["file_basename"] = Path(getattr(s.file, "name", "")).name if getattr(s, "file", None) else ""
+        except Exception:
+            ctx["file_basename"] = ""
+        return ctx
 
 
 @login_required
@@ -324,7 +444,7 @@ def download_assignment_file(request, pk: int):
 
 
 # -----------------------
-# Submissions
+# Submissions (upload/preview/download)
 # -----------------------
 @login_required
 def submit_assignment(request, pk: int):
@@ -332,6 +452,9 @@ def submit_assignment(request, pk: int):
     Create or replace the current user's submission for this assignment.
     Allowed for enrolled students AND non-owner enrolled professors.
     The owning professor cannot submit (unless superuser).
+
+    NOTE: We DO NOT grade now. We schedule one job (via Celery Beat) when the deadline passes;
+    until then, students can freely replace their file.
     """
     a = get_object_or_404(Assignment, pk=pk)
 
@@ -379,7 +502,7 @@ def submit_assignment(request, pk: int):
         if hasattr(sub, "runner_logs"):
             sub.runner_logs = ""
         sub.save()
-        messages.success(request, "Submission updated.")
+        messages.success(request, "Submission updated. Auto-grading will run after the deadline.")
     else:
         sub = AssignmentSubmission.objects.create(
             assignment=a,
@@ -388,26 +511,9 @@ def submit_assignment(request, pk: int):
             submitted_at=timezone.now(),
             **({"autograde_status": "queued"} if "autograde_status" in [f.name for f in AssignmentSubmission._meta.fields] else {})
         )
-        messages.success(request, "Submission uploaded.")
+        messages.success(request, "Submission uploaded. Auto-grading will run after the deadline.")
 
-    # ---- Autograde now (sync) ----
-    if HAS_AUTOGRADER:
-        try:
-            result = grade_submission(assignment=a, submission=sub)
-            apply_result_to_submission(sub, result)
-            sub.save()
-            status = result.get("status")
-            if status == "done" and result.get("grade_pct") is not None:
-                messages.success(request, f"Auto-graded: {result.get('grade_pct', 0):.2f}%")
-            else:
-                messages.warning(request, "Automatic grading unavailable; your submission awaits manual review.")
-        except Exception as e:
-            logger.exception("Autograder crashed: %s", e)
-            if hasattr(sub, "autograde_status"):
-                sub.autograde_status = "failed"
-                sub.save(update_fields=["autograde_status"])
-            messages.warning(request, "Autograder failed. Your file is saved for manual review.")
-
+    # Beat will enqueue at deadline; nothing else to do here
     return redirect("assignments:assignment_detail", pk=a.pk)
 
 
@@ -442,6 +548,39 @@ def _stream_submission_file(request, submission, inline: bool):
     disp = "inline" if inline else "attachment"
     resp["Content-Disposition"] = f'{disp}; filename="{filename}"'
     return resp
+
+
+@login_required
+def update_submission_grade(request, pk: int):
+    sub = get_object_or_404(AssignmentSubmission.objects.select_related("assignment", "assignment__professor"), pk=pk)
+
+    # Only the owning professor may edit
+    if request.user != sub.assignment.professor and not request.user.is_superuser:
+        messages.error(request, "You don't have permission to edit this grade.")
+        return redirect("assignments:submission_detail", pk=sub.pk)
+
+    if request.method == "POST":
+        grade_raw = (request.POST.get("grade_pct") or "").strip()
+        feedback  = (request.POST.get("ai_feedback") or "").strip()
+
+        # allow clearing the grade by leaving blank
+        try:
+            sub.grade_pct = float(grade_raw) if grade_raw != "" else None
+        except ValueError:
+            messages.error(request, "Grade must be a number between 0 and 100.")
+            return redirect("assignments:submission_detail", pk=sub.pk)
+
+        if sub.grade_pct is not None and not (0 <= sub.grade_pct <= 100):
+            messages.error(request, "Grade must be between 0 and 100.")
+            return redirect("assignments:submission_detail", pk=sub.pk)
+
+        sub.ai_feedback = feedback
+        sub.save(update_fields=["grade_pct", "ai_feedback"])
+        messages.success(request, "Grade & comment updated.")
+        return redirect("assignments:submission_detail", pk=sub.pk)
+
+    # If someone GETs this URL, just go back to detail
+    return redirect("assignments:submission_detail", pk=sub.pk)
 
 
 @xframe_options_exempt
