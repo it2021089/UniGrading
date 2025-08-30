@@ -1,7 +1,6 @@
 # assignments/tasks.py
 from __future__ import annotations
 
-import os
 import logging
 from celery import shared_task
 from django.db import transaction
@@ -13,14 +12,18 @@ from .autograder import grade_submission, apply_result_to_submission
 logger = logging.getLogger(__name__)
 
 
-def _llm_available() -> bool:
-    use_llm = os.getenv("AUTOGRADER_USE_LLM", "0") == "1"
-    api_key = os.getenv("OPENAI_API_KEY", "")
-    return bool(use_llm and api_key)
-
-
 @shared_task(bind=True, autoretry_for=(Exception,), retry_backoff=True, max_retries=3)
 def run_autograde(self, submission_id: int) -> dict:
+    """
+    Celery task to run the autograder asynchronously.
+
+    Contract with autograder:
+    - If LLM is unavailable or errors, autograder returns result with grade_pct=None
+      and status 'failed' plus human-friendly feedback. We then keep grade NULL and
+      mark the submission as 'failed' (meaning: manual review required).
+    - If grade_pct is present, we persist it and mark status 'done' (or 'failed'
+      if autograder reported a hard failure).
+    """
     try:
         sub = AssignmentSubmission.objects.select_related("assignment").get(pk=submission_id)
     except ObjectDoesNotExist:
@@ -29,23 +32,19 @@ def run_autograde(self, submission_id: int) -> dict:
 
     a = sub.assignment
 
-    # mark running if the field exists
+    # mark running (if field exists)
     if hasattr(sub, "autograde_status"):
         sub.autograde_status = "running"
         sub.save(update_fields=["autograde_status"])
 
+    # run autograder
     result = grade_submission(assignment=a, submission=sub)
 
-    require_llm_for_grade = os.getenv("AUTOGRADER_REQUIRE_LLM", "1") == "1"
-    llm_ok = _llm_available()
-    llm_used = bool(result.get("report", {}).get("llm_used", False))
-    llm_error = bool(result.get("report", {}).get("llm_error", ""))
-
-    hold_for_manual = require_llm_for_grade and (not llm_ok or not llm_used or llm_error)
+    manual_needed = (result.get("grade_pct") is None)
 
     with transaction.atomic():
-        if hold_for_manual:
-            # keep artifacts but DO NOT set grade
+        if manual_needed:
+            # Keep artifacts, but DO NOT assign a numeric grade.
             if hasattr(sub, "ai_feedback"):
                 sub.ai_feedback = result.get("feedback", "") or ""
             if hasattr(sub, "runner_logs"):
@@ -55,11 +54,17 @@ def run_autograde(self, submission_id: int) -> dict:
             if hasattr(sub, "grade_pct"):
                 sub.grade_pct = None
             if hasattr(sub, "autograde_status"):
-                sub.autograde_status = "await_manual"
+                # Use 'failed' to represent "awaiting manual review" (valid choice).
+                sub.autograde_status = "failed"
             sub.save()
-            return {"ok": True, "status": "await_manual", "reason": "llm_unavailable_or_failed"}
+            return {
+                "ok": True,
+                "status": sub.autograde_status,
+                "manual_review": True,
+                "grade": None,
+            }
 
-        # otherwise apply the grade
+        # Otherwise apply the grade normally
         apply_result_to_submission(sub, result)
         if hasattr(sub, "autograde_status"):
             sub.autograde_status = "done" if result.get("status") in ("done", "partial") else "failed"

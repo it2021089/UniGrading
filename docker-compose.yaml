@@ -43,26 +43,36 @@ services:
     working_dir: /UniGrading
     environment:
       DJANGO_SETTINGS_MODULE: UniGrading.settings
-      DATABASE_URL: /UniGrading/db.sqlite3  
-      AWS_ACCESS_KEY_ID: zAN5P7ekIrJdORdVtCPF # zAN5P7ekIrJdORdVtCPF <- Linux #Windows -> Dpa10KF1UZygmxyr36HW
-      AWS_SECRET_ACCESS_KEY: whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS # whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS  <- Linux #Windows -> ecoN8snDkWsunb6D2R5GPe3sRYp3KflOVLgXZ2zd
-      AWS_STORAGE_BUCKET_NAME: files
-      AWS_S3_ENDPOINT_URL: http://minio:9000
+      DATABASE_URL: ${DATABASE_URL:-/UniGrading/db.sqlite3}  
+
+      # pull secrets/config from .env (not committed)
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AUTOGRADER_USE_LLM: ${AUTOGRADER_USE_LLM:-1}
+      AUTOGRADER_REQUIRE_LLM: ${AUTOGRADER_REQUIRE_LLM:-1}
+      OPENAI_TEXT_MODEL: ${OPENAI_TEXT_MODEL:-gpt-5-mini}
+      OPENAI_CODE_MODEL: ${OPENAI_CODE_MODEL:-gpt-5-mini}
+
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID} 
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_STORAGE_BUCKET_NAME: ${AWS_STORAGE_BUCKET_NAME}
+      AWS_S3_ENDPOINT_URL: ${AWS_S3_ENDPOINT_URL}
 
       # ---- Autograder (execution) ----
       DOCKER_HOST: tcp://dind:2375
       AUTOGRADER_ENABLE_DOCKER: "1"
       AUTOGRADER_DISABLE_DOCKER: "0"
-      AUTOGRADER_ENABLE_LOCAL_EXEC: "0"   # keep local exec off for safety
+      AUTOGRADER_ENABLE_LOCAL_EXEC: "0"   
       AUTOGRADER_TIMEOUT_SEC: "180"
       AUTOGRADER_MAX_LOG_BYTES: "200000"
 
-      # ---- LLM (optional, for feedback/lenient grading when execution fails) ----
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-
       # ---- Celery / Redis (background grading) ----
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+
+      # --- Django misc (optional) ---
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-dev-key}
+      DEBUG: ${DEBUG:-1}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-127.0.0.1,localhost,unigrading}
 
     ports:
       - "8000:8000"  
@@ -92,15 +102,25 @@ services:
       AUTOGRADER_ENABLE_LOCAL_EXEC: "0"
       AUTOGRADER_TIMEOUT_SEC: "180"
       AUTOGRADER_MAX_LOG_BYTES: "200000"
+
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AUTOGRADER_USE_LLM: ${AUTOGRADER_USE_LLM:-1}
+      AUTOGRADER_REQUIRE_LLM: ${AUTOGRADER_REQUIRE_LLM:-1}
+      OPENAI_TEXT_MODEL: ${OPENAI_TEXT_MODEL:-gpt-5-mini}
+      OPENAI_CODE_MODEL: ${OPENAI_CODE_MODEL:-gpt-5-mini}
 
-      AWS_ACCESS_KEY_ID: zAN5P7ekIrJdORdVtCPF # zAN5P7ekIrJdORdVtCPF <- Linux #Windows -> Dpa10KF1UZygmxyr36HW
-      AWS_SECRET_ACCESS_KEY: whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS # whpL2eYgq1Yi2PtfrhDLOB7Ub7iF0JPtw7adZFLS  <- Linux #Windows -> ecoN8snDkWsunb6D2R5GPe3sRYp3KflOVLgXZ2zd
-      AWS_STORAGE_BUCKET_NAME: files
-      AWS_S3_ENDPOINT_URL: http://minio:9000
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID} 
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY} 
+      AWS_STORAGE_BUCKET_NAME: ${AWS_STORAGE_BUCKET_NAME}
+      AWS_S3_ENDPOINT_URL: ${AWS_S3_ENDPOINT_URL}
 
-      CELERY_BROKER_URL: redis://redis:6379/0
-      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      CELERY_BROKER_URL: ${CELERY_BROKER_URL:-redis://redis:6379/0}
+      CELERY_RESULT_BACKEND: ${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+
+      # --- Django misc (optional) ---
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-django-insecure-dev-key}
+      DEBUG: ${DEBUG:-1}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-127.0.0.1,localhost,unigrading}
 
     command: >
       sh -c "celery -A UniGrading.celery_app worker -l info --concurrency=1"

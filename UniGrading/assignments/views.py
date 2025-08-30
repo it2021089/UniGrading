@@ -30,20 +30,13 @@ except Exception:
     AssignmentSubmission = None  # type: ignore
     HAS_SUBMISSIONS = False
 
-# Autograder (sync) and optional Celery task
+# Autograder
 try:
     from .autograder import grade_submission, apply_result_to_submission  # type: ignore
     HAS_AUTOGRADER = True
 except Exception as _e:
     logger.warning("Autograder unavailable: %s", _e)
     HAS_AUTOGRADER = False
-
-try:
-    from .tasks import run_autograde  # type: ignore
-    HAS_CELERY = True
-except Exception:
-    run_autograde = None  # type: ignore
-    HAS_CELERY = False
 
 
 # -----------------------
@@ -68,6 +61,7 @@ class AssignmentListView(LoginRequiredMixin, BreadcrumbMixin, ListView):
 
     def get_queryset(self):
         self.subject = get_object_or_404(Subject, pk=self.kwargs["subject_id"])
+
         # Only subject owner or enrolled users can see the list
         if not (_is_owner_prof(self.request.user, self.subject) or _is_enrolled(self.request.user, self.subject)):
             return Assignment.objects.none()
@@ -113,7 +107,7 @@ class AssignmentListView(LoginRequiredMixin, BreadcrumbMixin, ListView):
                     if s:
                         a.my_submission_id = s.id
                         a.my_grade_pct = getattr(s, "grade_pct", None)
-                        a.can_submit = a.due_date > now
+                        a.can_submit = a.due_date > now  # can still re-submit before deadline
 
         return ctx
 
@@ -341,6 +335,7 @@ def submit_assignment(request, pk: int):
     """
     a = get_object_or_404(Assignment, pk=pk)
 
+    # Feature toggle
     if not HAS_SUBMISSIONS or AssignmentSubmission is None:
         messages.error(request, "Submissions are not enabled.")
         return redirect("assignments:assignment_detail", pk=a.pk)
@@ -367,14 +362,14 @@ def submit_assignment(request, pk: int):
         messages.error(request, "Please choose a file to upload.")
         return redirect("assignments:assignment_detail", pk=a.pk)
 
-    # Create or replace user's submission (accept ANY file type)
+    # Create or replace user's submission
     sub = AssignmentSubmission.objects.filter(assignment=a, student=request.user).first()
     if sub:
         try:
             if getattr(sub, "file", None) and sub.file.name:
                 sub.file.delete(save=False)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.info("Old submission file delete skipped: %s", e)
         sub.file = upfile
         sub.submitted_at = timezone.now()
         if hasattr(sub, "autograde_status"):
@@ -395,35 +390,23 @@ def submit_assignment(request, pk: int):
         )
         messages.success(request, "Submission uploaded.")
 
-    # Autograde: prefer Celery if available, else sync
-    try:
-        if HAS_CELERY and run_autograde:
-            run_autograde.delay(sub.id)
-            messages.info(request, "Your submission was queued for auto-grading. If the grading service is unavailable, it will be marked for manual review.")
-        elif HAS_AUTOGRADER:
+    # ---- Autograde now (sync) ----
+    if HAS_AUTOGRADER:
+        try:
             result = grade_submission(assignment=a, submission=sub)
             apply_result_to_submission(sub, result)
             sub.save()
-
-            grade_val = result.get("grade_pct", None)
             status = result.get("status")
-
-            if isinstance(grade_val, (int, float)) and status == "done":
-                messages.success(request, f"Auto-graded: {grade_val:.2f}%")
-            elif status == "manual" or grade_val is None:
-                messages.info(request, "Automatic grading is unavailable right now. Your submission will be reviewed manually.")
-            elif status in ("failed",):
-                messages.warning(request, "Autograder failed. Your file is saved for manual review.")
+            if status == "done" and result.get("grade_pct") is not None:
+                messages.success(request, f"Auto-graded: {result.get('grade_pct', 0):.2f}%")
             else:
-                messages.info(request, "Automatic analysis completed. Awaiting manual confirmation.")
-        else:
-            messages.warning(request, "Autograder is not available. Your file was saved for manual review.")
-    except Exception as e:
-        logger.exception("Autograder enqueue/run failed: %s", e)
-        if hasattr(sub, "autograde_status"):
-            sub.autograde_status = "failed"
-            sub.save(update_fields=["autograde_status"])
-        messages.warning(request, "Autograder failed. Your file is saved for manual review.")
+                messages.warning(request, "Automatic grading unavailable; your submission awaits manual review.")
+        except Exception as e:
+            logger.exception("Autograder crashed: %s", e)
+            if hasattr(sub, "autograde_status"):
+                sub.autograde_status = "failed"
+                sub.save(update_fields=["autograde_status"])
+            messages.warning(request, "Autograder failed. Your file is saved for manual review.")
 
     return redirect("assignments:assignment_detail", pk=a.pk)
 
@@ -433,6 +416,7 @@ def _stream_submission_file(request, submission, inline: bool):
     Stream a submission's file. Allowed to owner professor, the submitter, or superuser.
     """
     a = submission.assignment
+
     allowed = (
         request.user.is_superuser
         or _is_owner_prof(request.user, a.subject)

@@ -11,11 +11,11 @@ import os
 # -------------------------
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "django-insecure-dev-key")
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
 DEBUG = os.getenv("DEBUG", "1") == "1"
 
-# IMPORTANT: you had this twice; keep only one.
-ALLOWED_HOSTS = ["127.0.0.1", "localhost", "unigrading"]
+# Allow override from env; keep your defaults
+ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "127.0.0.1,localhost,unigrading").split(",")
 
 X_FRAME_OPTIONS = "SAMEORIGIN"
 
@@ -125,17 +125,11 @@ if _db:
     if _db.startswith("sqlite:///"):
         _db = _db.replace("sqlite:///", "", 1)
     DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": _db,
-        }
+        "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": _db}
     }
 else:
     DATABASES = {
-        "default": {
-            "ENGINE": "django.db.backends.sqlite3",
-            "NAME": BASE_DIR / "db.sqlite3",
-        }
+        "default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}
     }
 
 # -------------------------
@@ -145,7 +139,6 @@ STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# Keep MEDIA_URL neutral; S3Boto3 will serve via signed URLs/streaming.
 MEDIA_URL = "/media/"
 
 # -------------------------
@@ -163,14 +156,10 @@ AWS_S3_URL_PROTOCOL = "http:"      # plain http to the MinIO service
 AWS_QUERYSTRING_AUTH = True
 AWS_DEFAULT_ACL = None
 
-# Use Django 5 STORAGES to make S3Boto3 the default storage for FileField AND default_storage
+# Django 5 STORAGES — S3/MinIO is the default for FileField and default_storage
 STORAGES = {
-    "default": {
-        "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
-    },
-    "staticfiles": {
-        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
-    },
+    "default": {"BACKEND": "storages.backends.s3boto3.S3Boto3Storage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
 }
 
 # -------------------------
@@ -203,9 +192,7 @@ LOGGING = {
     "disable_existing_loggers": False,
     "handlers": {"console": {"class": "logging.StreamHandler"}},
     "root": {"handlers": ["console"], "level": "INFO"},
-    "loggers": {
-        "django": {"handlers": ["console"], "level": "INFO", "propagate": True},
-    },
+    "loggers": {"django": {"handlers": ["console"], "level": "INFO", "propagate": True}},
 }
 
 # -------------------------

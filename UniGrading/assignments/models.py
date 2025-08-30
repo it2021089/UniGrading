@@ -24,9 +24,9 @@ class Assignment(models.Model):
     due_date = models.DateTimeField()
     file = models.FileField(upload_to=assignment_upload_path, blank=True, null=True)
 
-    # --- Auto-grading config (simple hints; you can ignore in UI if you want) ---
+    # --- Auto-grading config (no unit tests needed) ---
     autograde_enabled = models.BooleanField(default=True)
-    autograde_max_tokens = models.PositiveIntegerField(default=16000)
+    autograde_max_tokens = models.PositiveIntegerField(default=16000)  # hint; actual truncation done by autograder
     autograde_leniency = models.PositiveIntegerField(default=5)        # 1=strict .. 5=very lenient
     autograde_weight_runtime = models.FloatField(default=0.7)
     autograde_weight_rubric = models.FloatField(default=0.3)
@@ -50,6 +50,7 @@ class Assignment(models.Model):
 # ----------------------------
 # Student submissions + AI grade
 # ----------------------------
+
 def submission_upload_path(instance, filename):
     """
     Store submissions under:
@@ -69,7 +70,7 @@ class AssignmentSubmission(models.Model):
     file = models.FileField(upload_to=submission_upload_path)
     submitted_at = models.DateTimeField(default=timezone.now)
 
-    # numeric grade (0..100)
+    # numeric grade (0..100) — may be NULL when awaiting manual review
     grade_pct = models.FloatField(null=True, blank=True)
 
     # --- AI grading state ---
@@ -77,13 +78,12 @@ class AssignmentSubmission(models.Model):
         ("queued",  "Queued"),
         ("running", "Running"),
         ("done",    "Done"),
-        ("failed",  "Failed"),
+        ("failed",  "Failed"),  # also used for "manual review required"
     ]
     autograde_status = models.CharField(max_length=12, choices=AUTOGRADE_STATUS, default="queued")
     autograde_report = models.JSONField(blank=True, null=True)  # structured result
-    ai_feedback = models.TextField(blank=True)                  # narrative feedback
+    ai_feedback = models.TextField(blank=True)                  # narrative feedback for the student
     runner_logs = models.TextField(blank=True)                  # build/run notes (truncated)
-    graded_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         unique_together = (("assignment", "student"),)
