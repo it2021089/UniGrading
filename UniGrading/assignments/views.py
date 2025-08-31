@@ -30,7 +30,13 @@ try:
 except Exception:
     AssignmentSubmission = None  # type: ignore
     HAS_SUBMISSIONS = False
-
+try:
+    from .tasks import ensure_autograde_scheduled  # schedules run_autograde_for_assignment
+    HAS_SCHEDULER = True
+except Exception:
+    HAS_SCHEDULER = False
+    def ensure_autograde_scheduled(*_args, **_kwargs):  # type: ignore
+        return None
 
 # -----------------------
 # Permission helpers
@@ -242,14 +248,37 @@ class AssignmentUpdateView(LoginRequiredMixin, BreadcrumbMixin, UpdateView):
     def form_valid(self, form):
         obj = self.get_object()
         old_due = obj.due_date
-        # normalize due_date using client's tz if supplied
-        form.instance.due_date = _normalize_due_with_client_tz(self.request, form.cleaned_data.get("due_date"))
+        old_enabled = getattr(obj, "autograde_enabled", True)
+        was_done = bool(getattr(obj, "autograde_done_at", None))
+
+        # normalize due_date using client's tz if your helper exists
+        try:
+            form.instance.due_date = _normalize_due_with_client_tz(
+                self.request, form.cleaned_data.get("due_date")
+            )
+        except NameError:
+            # helper not available; keep the form value as-is
+            pass
+
         resp = super().form_valid(form)
         self.object.refresh_from_db()
-        # If due date changed, let Beat enqueue again at the new time
-        if self.object.autograde_enabled and self.object.due_date != old_due:
-            self.object.autograde_job_scheduled = False
-            self.object.save(update_fields=["autograde_job_scheduled"])
+
+        # If scheduler is wired and the assignment is NOT already finished:
+        if HAS_SCHEDULER and not was_done and self.object.autograde_enabled:
+            new_due = self.object.due_date
+            new_enabled = self.object.autograde_enabled
+
+            # Reschedule when:
+            #  - due date changed, or
+            #  - autograde was off and now turned on, or
+            #  - we explicitly cleared scheduling earlier
+            if (new_due != old_due) or (not old_enabled and new_enabled) or (not self.object.autograde_job_scheduled):
+                # Clear the flag and schedule exactly once (ETA or immediate if past-due)
+                self.object.autograde_job_scheduled = False
+                self.object.save(update_fields=["autograde_job_scheduled"])
+                ensure_autograde_scheduled(self.object.pk)
+
+        # If already graded (was_done=True), we do nothing—no re-scheduling.
         return resp
 
     def get_success_url(self):
@@ -271,7 +300,7 @@ class AssignmentUpdateView(LoginRequiredMixin, BreadcrumbMixin, UpdateView):
             ("Assignments", reverse_lazy("assignments:assignment_list", kwargs={"subject_id": s.pk})),
             (a.title, reverse_lazy("assignments:assignment_detail", kwargs={"pk": a.pk})),
             ("Edit", self.request.path),
-        ]
+        ]   
 
 
 # -------- NEW: submissions list & detail (owner professor) --------
