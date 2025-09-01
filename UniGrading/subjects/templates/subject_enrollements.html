@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Enrollments — {{ subject.name }}</h2>
+<p>Total enrolled: {{ total }}</p>
+
+<table class="table">
+  <thead><tr><th>Name</th><th>Email</th><th></th></tr></thead>
+  <tbody>
+  {% for e in enrollments %}
+    <tr>
+      <td>{{ e.user.get_full_name|default:e.user.username }}</td>
+      <td>{{ e.user.email }}</td>
+      <td>
+        <form method="post" style="display:inline">
+          {% csrf_token %}
+          <input type="hidden" name="action" value="remove" />
+          <input type="hidden" name="id" value="{{ e.id }}" />
+          <button class="btn btn-sm btn-danger" onclick="return confirm('Remove this student?')">Remove</button>
+        </form>
+      </td>
+    </tr>
+  {% empty %}
+    <tr><td colspan="3">No enrollments yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

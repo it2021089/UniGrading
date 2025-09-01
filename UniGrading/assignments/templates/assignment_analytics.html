@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}Analytics · {{ assignment.title }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+  <nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+      {% for name, url in breadcrumbs %}
+        <li class="breadcrumb-item"><a href="{{ url }}">{{ name }}</a></li>
+      {% endfor %}
+    </ol>
+  </nav>
+
+  <h3 class="mb-3">Analytics — {{ assignment.title }}</h3>
+
+  <div class="row">
+    <div class="col-md-6">
+      <div class="card mb-3">
+        <div class="card-header">Summary</div>
+        <div class="card-body">
+          <ul class="mb-0">
+            <li><strong>Graded:</strong> {{ stats.count|default:"0" }}</li>
+            <li><strong>Average:</strong> {{ stats.avg|default:"—" }}%</li>
+            <li><strong>Median:</strong> {{ stats.median|default:"—" }}%</li>
+            <li><strong>Min / Max:</strong> {{ stats.min|default:"—" }}% / {{ stats.max|default:"—" }}%</li>
+            <li><strong>Pass rate (≥50%):</strong> {{ stats.pass_rate|default:"—" }}%</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-6">
+      <div class="card mb-3">
+        <div class="card-header">Grade distribution</div>
+        <div class="card-body"><canvas id="hist"></canvas></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">Per-student</div>
+    <div class="card-body table-responsive">
+      <table class="table table-sm">
+        <thead><tr><th>Student</th><th>Grade</th><th>Status</th><th>Submitted</th></tr></thead>
+        <tbody>
+            {% for r in rows %}
+              <tr>
+                <td>{{ r.name }}</td>
+                <td>{% if r.grade is not None %}{{ r.grade }}%{% else %}<span class="text-muted">—</span>{% endif %}</td>
+                <td>{{ r.status }}</td>
+                <td>{% if r.submitted %}{{ r.submitted|date:"M d, Y H:i" }}{% else %}<span class="text-muted">—</span>{% endif %}</td>
+              </tr>
+            {% empty %}
+              <tr><td colspan="4" class="text-muted">No submissions yet.</td></tr>
+            {% endfor %}
+          </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{{ hist_bins|json_script:"hist-data" }}
+{{ common_errors|json_script:"err-data" }}
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+  // Helper to get json_script data
+  function dataFrom(id){ return JSON.parse(document.getElementById(id).textContent); }
+
+  // Histogram
+  const hist = dataFrom('hist-data');
+  new Chart(document.getElementById('hist'), {
+    type: 'bar',
+    data: {
+      labels: ['0–9','10–19','20–29','30–39','40–49','50–59','60–69','70–79','80–89','90–100'],
+      datasets: [{ label: 'Count', data: hist }]
+    },
+    options: { responsive: true, scales: { y: { beginAtZero: true, precision:0 } } }
+  });
+
+  // Common errors
+  const errs = dataFrom('err-data');
+  new Chart(document.getElementById('errors'), {
+    type: 'bar',
+    data: {
+      labels: errs.map(e => e.label),
+      datasets: [{ label: 'Occurrences', data: errs.map(e => e.count) }]
+    },
+    options: { indexAxis: 'y', responsive: true, scales: { x: { beginAtZero: true, precision:0 } } }
+  });
+</script>
+{% endblock %}

@@ -16,6 +16,8 @@ from botocore.exceptions import ClientError
 from .models import Subject, Category, File, Enrollment
 from .forms import SubjectForm
 from UniGrading.mixin import BreadcrumbMixin
+from assignments.views import _is_owner_prof
+
 
 # Set up logging
 logger = logging.getLogger(__name__)
@@ -636,3 +638,32 @@ def preview_file(request, pk):
         return response
     except Exception:
         raise Http404("File could not be previewed.")
+
+class SubjectEnrollmentsView(LoginRequiredMixin, ListView):
+    template_name = "subject_enrollments.html"
+    context_object_name = "enrollments"
+
+    def dispatch(self, request, *args, **kwargs):
+        self.subject = get_object_or_404(Subject, pk=kwargs["pk"])
+        if not _is_owner_prof(request.user, self.subject):
+            raise Http404("Not found.")
+        return super().dispatch(request, *args, **kwargs)
+
+    def get_queryset(self):
+        return (Enrollment.objects
+                .filter(subject=self.subject)
+                .select_related("user")
+                .order_by("user__last_name","user__first_name"))
+
+    def post(self, request, *args, **kwargs):
+        if request.POST.get("action") == "remove":
+            enr_id = request.POST.get("id")
+            Enrollment.objects.filter(pk=enr_id, subject=self.subject).delete()
+            messages.success(request, "Enrollment removed.")
+        return redirect("subjects:manage_enrollments", pk=self.subject.pk)
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        ctx["subject"] = self.subject
+        ctx["total"] = self.get_queryset().count()
+        return ctx

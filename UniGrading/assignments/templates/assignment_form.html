@@ -88,7 +88,7 @@
                             <input type="hidden" name="client_tz" id="client_tz">
                             <input type="hidden" name="client_tz_offset_min" id="client_tz_offset_min">
                         </div>
-
+                        
                         <!-- File Upload -->
                         <div class="form-group mb-4 mt-3">
                             <label for="{{ form.file.id_for_label }}" class="form-label">Assignment File</label>
@@ -117,7 +117,9 @@
                                 New file selected — the old file will be replaced on save.
                             </div>
                         </div>
-
+                        <div class="form-check mb-3">
+                            {{ form.autograde_enabled }} <label class="form-check-label">Enable autograder</label>
+                          </div>
                         <div class="d-flex justify-content-between">
                             {% if object.pk %}
                                 <a href="{% url 'assignments:assignment_detail' object.pk %}" class="btn btn-secondary">

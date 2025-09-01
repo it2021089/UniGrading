@@ -6,33 +6,29 @@ from django.utils import timezone
 from users.models import CustomUser
 from subjects.models import Subject
 
-
 def assignment_upload_path(instance, filename):
-    """Store under: <prof>/<subject>/assignment-files/<filename>, slugs for safety."""
     prof = (instance.professor.get_full_name() or instance.professor.username or "prof").strip()
     subj = (instance.subject.name or "subject").strip()
     return f"{slugify(prof)}/{slugify(subj)}/assignment-files/{filename}"
-
 
 class Assignment(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField()
     subject = models.ForeignKey(Subject, related_name="assignments", on_delete=models.CASCADE)
-    professor = models.ForeignKey(
-        CustomUser, limit_choices_to={'role': 'professor'}, on_delete=models.CASCADE
-    )
+    professor = models.ForeignKey(CustomUser, limit_choices_to={'role': 'professor'}, on_delete=models.CASCADE)
     due_date = models.DateTimeField()
     file = models.FileField(upload_to=assignment_upload_path, blank=True, null=True)
 
-    # --- Auto-grading config ---
+    # Autograder config
     autograde_enabled = models.BooleanField(default=True)
-    autograde_max_tokens = models.PositiveIntegerField(default=16000)  # LLM input budget hint
-    autograde_leniency = models.PositiveIntegerField(default=5)        # 1=strict .. 5=very lenient
+    autograde_max_tokens = models.PositiveIntegerField(default=16000)
+    autograde_leniency = models.PositiveIntegerField(default=5)
     autograde_weight_runtime = models.FloatField(default=0.7)
     autograde_weight_rubric = models.FloatField(default=0.3)
-    autograde_done_at = models.DateTimeField(null=True, blank=True)
-    # Beat will enqueue once when due_date passes (flag prevents duplicates)
+
+    # Scheduling flags
     autograde_job_scheduled = models.BooleanField(default=False)
+    autograde_done_at = models.DateTimeField(blank=True, null=True)
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -49,16 +45,7 @@ class Assignment(models.Model):
             self.file.storage.delete(self.file.name)
         super().delete(*args, **kwargs)
 
-
-# ----------------------------
-# Student submissions + AI grade
-# ----------------------------
-
 def submission_upload_path(instance, filename):
-    """
-    Store submissions under:
-      <prof>/<subject>/assignment-submissions/<assignment-slug>/<student-slug>/<filename>
-    """
     a = instance.assignment
     prof = slugify(a.subject.professor.get_full_name() or a.subject.professor.username or "prof")
     subj = slugify(a.subject.name or "subject")
@@ -66,28 +53,25 @@ def submission_upload_path(instance, filename):
     student = slugify(instance.student.get_full_name() or instance.student.username or f"user-{instance.student_id}")
     return f"{prof}/{subj}/assignment-submissions/{a_slug}/{student}/{filename}"
 
-
 class AssignmentSubmission(models.Model):
     assignment = models.ForeignKey(Assignment, related_name="submissions", on_delete=models.CASCADE)
     student = models.ForeignKey(CustomUser, related_name="assignment_submissions", on_delete=models.CASCADE)
     file = models.FileField(upload_to=submission_upload_path)
     submitted_at = models.DateTimeField(default=timezone.now)
 
-    # numeric grade (0..100)
     grade_pct = models.FloatField(null=True, blank=True)
 
-    # --- AI grading state ---
     AUTOGRADE_STATUS = [
-        ("queued",        "Queued"),
-        ("running",       "Running"),
-        ("done",          "Done"),
-        ("failed",        "Failed"),
-        ("await_manual",  "Await manual review"),
+        ("queued", "Queued"),
+        ("running", "Running"),
+        ("done", "Done"),
+        ("failed", "Failed"),
+        ("await_manual", "Await manual review"),
     ]
     autograde_status = models.CharField(max_length=12, choices=AUTOGRADE_STATUS, default="queued")
-    autograde_report = models.JSONField(blank=True, null=True)  # structured result
-    ai_feedback = models.TextField(blank=True)                  # narrative feedback
-    runner_logs = models.TextField(blank=True)                  # build/run notes (truncated)
+    autograde_report = models.JSONField(blank=True, null=True)
+    ai_feedback = models.TextField(blank=True)
+    runner_logs = models.TextField(blank=True)
 
     class Meta:
         unique_together = (("assignment", "student"),)

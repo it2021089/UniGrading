@@ -3,7 +3,8 @@ from pathlib import Path
 import logging
 import mimetypes
 from zoneinfo import ZoneInfo
-
+from collections import Counter
+import statistics, re
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
@@ -230,7 +231,68 @@ class AssignmentDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
 
         return ctx
 
+class AssignmentAnalyticsView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
+    model = Assignment
+    template_name = "assignment_analytics.html"
+    context_object_name = "assignment"
 
+    def get_object(self):
+        a = get_object_or_404(Assignment, pk=self.kwargs["pk"])
+        if not (_is_owner_prof(self.request.user, a.subject) or self.request.user.is_superuser):
+            raise Http404("Not found.")
+        return a
+
+    def get_breadcrumbs(self):
+        a = self.get_object()
+        return [
+            ("Dashboard", DASHBOARD_URL),
+            ("My Subjects", reverse_lazy("subjects:my_subjects")),
+            (a.subject.name, reverse_lazy("subjects:subject_detail", kwargs={"pk": a.subject.pk})),
+            ("Assignments", reverse_lazy("assignments:assignment_list", kwargs={"subject_id": a.subject.pk})),
+            (a.title, reverse_lazy("assignments:assignment_detail", kwargs={"pk": a.pk})),
+            ("Analytics", self.request.path),
+        ]
+
+    def get_context_data(self, **kwargs):
+        ctx = super().get_context_data(**kwargs)
+        a = ctx["assignment"]
+        subs = (AssignmentSubmission.objects
+                .filter(assignment=a)
+                .select_related("student")
+                .only("grade_pct","submitted_at","runner_logs","ai_feedback","autograde_status",
+                      "student__first_name","student__last_name","student__email"))
+
+        rows = []
+        for s in subs:
+            rows.append({
+                "name": s.student.get_full_name() or s.student.email,
+                "grade": float(s.grade_pct) if s.grade_pct is not None else None,
+                "status": getattr(s, "autograde_status", "") or "",
+                "submitted": s.submitted_at,
+            })
+        vals = [r["grade"] for r in rows if r["grade"] is not None]
+
+        stats = {
+            "count": len(vals),
+            "avg": round(statistics.fmean(vals), 2) if vals else None,
+            "median": round(statistics.median(vals), 2) if vals else None,
+            "min": round(min(vals), 2) if vals else None,
+            "max": round(max(vals), 2) if vals else None,
+            "pass_rate": round(100.0 * sum(v >= 50 for v in vals) / len(vals), 1) if vals else None,
+        }
+
+        # 0–100 histogram in 10-pt bins
+        hist_bins = [0] * 10
+        for v in vals:
+            hist_bins[min(9, int(v) // 10)] += 1
+
+        ctx.update({
+            "breadcrumbs": self.get_breadcrumbs(),
+            "rows": rows,
+            "stats": stats,
+            "hist_bins": hist_bins,
+        })
+        return ctx
 class AssignmentUpdateView(LoginRequiredMixin, BreadcrumbMixin, UpdateView):
     model = Assignment
     form_class = AssignmentForm
@@ -578,6 +640,20 @@ def _stream_submission_file(request, submission, inline: bool):
     resp["Content-Disposition"] = f'{disp}; filename="{filename}"'
     return resp
 
+@login_required
+def delete_assignment(request, pk: int):
+    if request.method != "POST":
+        return redirect("assignments:assignment_detail", pk=pk)
+
+    a = get_object_or_404(Assignment, pk=pk)
+    # owner professor or superuser only
+    is_owner = (getattr(request.user, "role", None) == "professor" and a.subject.professor_id == request.user.id)
+    if not (is_owner or request.user.is_superuser):
+        return redirect("assignments:assignment_detail", pk=pk)
+
+    subject_id = a.subject_id
+    a.delete()
+    return redirect("assignments:assignment_list", subject_id=subject_id)
 
 @login_required
 def update_submission_grade(request, pk: int):
