@@ -292,11 +292,11 @@ def _handle_archive_with_ai_plan(workroot: Path, local_path: Path, filename: str
     res = _llm_grade_textual(grade_text, spec_text, spec_attach, context, logs, report)
 
     # Small bonus if ok
-    if ok:
-        res["grade_pct"] = max(res.get("grade_pct", 0), 80.0)
-        res["feedback"] = (res.get("feedback", "") + "\n\nProject executed successfully under AI-planned run.").strip()
-    else:
-        res["feedback"] = (res.get("feedback", "") + "\n\nWe could not fully run the project; graded based on files/logs.").strip()
+    # if ok:
+    #     res["grade_pct"] = max(res.get("grade_pct", 0), 80.0)
+    #     res["feedback"] = (res.get("feedback", "") + "\n\nProject executed successfully under AI-planned run.").strip()
+    # else:
+    #     res["feedback"] = (res.get("feedback", "") + "\n\nWe could not fully run the project; graded based on files/logs.").strip()
 
     return res
 
@@ -661,22 +661,22 @@ def _handle_single_code(workroot: Path, local_path: Path, filename: str, spec_te
     text_for_llm = f"RUNTIME STDOUT/STDERR (full, truncated):\n{full}"
     res = _llm_grade_textual(text_for_llm, spec_text, spec_attach, {"type": f"single-{lang or 'code'}"}, logs, report)
 
-    missing_file = ("No such file or directory" in run_logs) or ("can't open file" in run_logs) or ("not found" in run_logs)
+    # missing_file = ("No such file or directory" in run_logs) or ("can't open file" in run_logs) or ("not found" in run_logs)
 
-    if ran and ok:
-        res["grade_pct"] = max(res.get("grade_pct", 0), 75.0)
-        res["feedback"] = (res.get("feedback", "") + "\n\nProgram ran successfully.").strip()
-    elif missing_file:
-        report["detected_work"] = False
-        res["grade_pct"] = 5.0
-        res["status"] = "failed"
-        res["feedback"] = "No runnable file was found. Please upload code or a supported archive."
-    elif ran and not ok:
-        res["grade_pct"] = min(res.get("grade_pct", 100.0), 25.0)
-        res["feedback"] = (res.get("feedback", "") + "\n\nProgram executed with errors.").strip()
-    else:
-        res["grade_pct"] = min(res.get("grade_pct", 100.0), 15.0)
-        res["feedback"] = (res.get("feedback", "") + "\n\nCould not execute; static review only.").strip()
+    # if ran and ok:
+    #     res["grade_pct"] = max(res.get("grade_pct", 0), 75.0)
+    #     res["feedback"] = (res.get("feedback", "") + "\n\nProgram ran successfully.").strip()
+    # elif missing_file:
+    #     report["detected_work"] = False
+    #     res["grade_pct"] = 5.0
+    #     res["status"] = "failed"
+    #     res["feedback"] = "No runnable file was found. Please upload code or a supported archive."
+    # elif ran and not ok:
+    #     res["grade_pct"] = min(res.get("grade_pct", 100.0), 25.0)
+    #     res["feedback"] = (res.get("feedback", "") + "\n\nProgram executed with errors.").strip()
+    # else:
+    #     res["grade_pct"] = min(res.get("grade_pct", 100.0), 15.0)
+    #     res["feedback"] = (res.get("feedback", "") + "\n\nCould not execute; static review only.").strip()
     return res
 
 def _run_single_file_in_sandbox(path: Path, lang: Optional[str], timeout: int = 60) -> Tuple[bool, bool, str]:
