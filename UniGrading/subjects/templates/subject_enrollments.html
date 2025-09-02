@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% load static %}
+
+{% block title %}Enrollments — {{ subject.name }}{% endblock %}
+
+{% block content %}
+<div class="container mt-5">
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <h3 class="mb-0">
+      <i class="fas fa-users text-primary mr-2"></i>Enrollments — {{ subject.name }}
+      <span class="badge badge-pill badge-primary ml-2">{{ total }}</span>
+    </h3>
+    <div>
+      <a href="{% url 'subjects:subject_detail' subject.id %}" class="btn btn-light">
+        <i class="fas fa-arrow-left"></i> Back to Subject
+      </a>
+    </div>
+  </div>
+
+  <div class="card shadow-sm no-hover-card">
+    <div class="card-body">
+      <div class="d-md-flex align-items-center justify-content-between mb-3">
+        <div class="input-group mb-2 mb-md-0" style="max-width: 360px;">
+          <div class="input-group-prepend">
+            <span class="input-group-text"><i class="fas fa-search"></i></span>
+          </div>
+          <input id="searchBox" type="text" class="form-control" placeholder="Filter by name or email…">
+        </div>
+        <small class="text-muted">Total enrolled: <strong>{{ total }}</strong></small>
+      </div>
+
+      {% if enrollments %}
+      <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+          <thead class="thead-light">
+            <tr>
+              <th style="width: 42px;"></th>
+              <th>Name</th>
+              <th>Email</th>
+              <th class="text-right" style="width: 120px;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="enrollTable">
+          {% for e in enrollments %}
+            {% with name=e.user.get_full_name|default:e.user.username %}
+            <tr class="enroll-row">
+              <td>
+                <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center"
+                     style="width:36px;height:36px;font-weight:600;">
+                  {{ name|slice:":1"|upper }}
+                </div>
+              </td>
+              <td class="enroll-name">{{ name }}</td>
+              <td class="enroll-email text-muted">{{ e.user.email }}</td>
+              <td class="text-right">
+                <button type="button"
+                        class="btn btn-sm btn-outline-danger"
+                        data-toggle="modal"
+                        data-target="#removeModal"
+                        data-id="{{ e.id }}"
+                        data-name="{{ name }}">
+                  <i class="fas fa-user-minus"></i> Remove
+                </button>
+              </td>
+            </tr>
+            {% endwith %}
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% else %}
+        <div class="text-center py-5">
+          <img src="{% static 'img/empty-state.svg' %}" alt="" style="height:120px;" class="mb-3 d-none d-md-inline">
+          <h5 class="mb-1">No enrollments yet</h5>
+          <p class="text-muted mb-0">Share this subject with your students to let them enroll.</p>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Remove confirmation modal -->
+<div class="modal fade" id="removeModal" tabindex="-1" role="dialog" aria-labelledby="removeModalLabel" aria-hidden="true">
+  <div class="modal-dialog" role="document">
+    <form method="post" class="modal-content">
+      {% csrf_token %}
+      <input type="hidden" name="action" value="remove">
+      <input type="hidden" name="id" id="removeId">
+      <div class="modal-header bg-danger text-white">
+        <h5 class="modal-title" id="removeModalLabel"><i class="fas fa-user-minus mr-1"></i> Remove Enrollment</h5>
+        <button type="button" class="close text-white" data-dismiss="modal"><span>&times;</span></button>
+      </div>
+      <div class="modal-body">
+        Are you sure you want to remove <strong id="removeName">this student</strong> from <strong>{{ subject.name }}</strong>?
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-dismiss="modal">Cancel</button>
+        <button type="submit" class="btn btn-danger">Remove</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+  // Client-side filter
+  const search = document.getElementById('searchBox');
+  const rows = document.querySelectorAll('#enrollTable .enroll-row');
+  if (search) {
+    search.addEventListener('input', function () {
+      const q = this.value.toLowerCase().trim();
+      rows.forEach(tr => {
+        const name = tr.querySelector('.enroll-name')?.textContent.toLowerCase() || '';
+        const email = tr.querySelector('.enroll-email')?.textContent.toLowerCase() || '';
+        tr.style.display = (name.includes(q) || email.includes(q)) ? '' : 'none';
+      });
+    });
+  }
+
+  // Populate modal with target row info
+  $('#removeModal').on('show.bs.modal', function (e) {
+    const btn = $(e.relatedTarget);
+    const id = btn.data('id');
+    const name = btn.data('name');
+    $('#removeId').val(id);
+    $('#removeName').text(name || 'this student');
+  });
+</script>
+{% endblock %}

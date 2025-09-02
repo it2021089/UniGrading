@@ -1,35 +1,69 @@
 # assignments/autograder.py
 """
-Generic, adaptable autograder.
+Adaptive, AI-planned autograder.
 
-- Accepts: single files, zips/tars, notebooks, PDFs/DOCX/TXT/MD, images, binaries.
-- For code projects: tries best-effort build/run in Docker (DinD), captures full logs.
-- For apps (web/API): briefly boots and probes common ports inside the container, then stops.
-- For non-runnable / missing deps: falls back to static + LLM review of code tree and logs.
-- LLM produces summary + findings + grade + confidence; if confidence low, tasks.py can mark
-  await_manual but still keep comments and full logs to help the professor.
+Flow
+----
+1) Download submission (or extract archive) into a shared workroot (for Docker bind).
+2) Build a full project TREE (recursive, up to 20k files) + key hints (e.g., manage.py, pom.xml).
+3) Ask an LLM to produce a minimal "run plan" (list of services) describing:
+      - image (Docker image)
+      - workdir (relative path within tree)
+      - setup (list of shell commands, e.g., pip install -r requirements.txt)
+      - run (list of shell commands to exercise the app/tests)
+      - env (optional environment variables)
+      - network (bool; defaults False; honored only if AUTOGRADER_ALLOW_NET_SETUP=1)
+      - timeout (int seconds; clamped)
+   We sanitize the plan to a safe subset and restrict images to an allowlist.
+4) Execute services sequentially with Docker. Capture all logs.
+5) If overall run fails, send TREE + logs + original plan back to the LLM ONCE to get a "refined plan"; re-run.
+6) Grade leniently by LLM using the logs, tree snapshot, and assignment description; or heuristic if LLM unavailable.
 
-Env:
-- DOCKER_HOST=tcp://dind:2375
-- AUTOGRADER_DISABLE_DOCKER=1 (skip docker)
-- AUTOGRADER_ENABLE_LOCAL_EXEC=1 (unsafe local fallback for dev)
-- AUTOGRADER_USE_LLM=1 + OPENAI_API_KEY
-- OPENAI_MODEL (default gpt-5-mini)
-- AUTOGRADER_TIMEOUT_SEC (default 180)
-- AUTOGRADER_MAX_LOG_BYTES (default 200000)
-- GRADER_SHARED_DIR (/grader-shared)
+Environment flags
+-----------------
+AUTOGRADER_USE_LLM=1           Enable LLM usage (requires OPENAI_API_KEY)
+AUTOGRADER_REQUIRE_LLM=1       If set, tasks.py may hold grade when LLM unusable (this file still returns a result)
+OPENAI_MODEL                   Chat model (default: gpt-5-mini)
+GRADER_SHARED_DIR              Path for shared temp (default: /grader-shared)
+AUTOGRADER_ALLOW_NET_SETUP=1   Allow containers to access network during setup/run (default: off)
+AUTOGRADER_IMAGE_DEFAULT       Default image when plan's image not allowed (default: python:3.11)
+AUTOGRADER_ALLOWED_IMAGES      Comma-separated allowlist override; else default list below
+
+Safety
+------
+- Network is OFF by default (network_mode="none"). Only enabled if the plan asks for it AND AUTOGRADER_ALLOW_NET_SETUP=1.
+- No apt-get is suggested; planner is nudged toward pip/npm/maven/gradle tasks.
+- Images are restricted to an allowlist to prevent arbitrary pulls.
+
+Result schema
+-------------
+{
+  "status": "done" | "partial" | "failed",
+  "grade_pct": float,
+  "feedback": str,
+  "report": {...},         # languages, file_tree, plans, etc.
+  "logs": str,             # full combined logs (truncated)
+  "finished_at": iso8601,
+  "elapsed_s": float
+}
 """
 
 from __future__ import annotations
 
-import os, re, json, time, shutil, tarfile, zipfile, tempfile, mimetypes, subprocess, importlib
+import os, re, io, json, time, shutil, tarfile, zipfile, tempfile, mimetypes, subprocess, importlib
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple
+
 from django.utils import timezone
 
+# -----------------------
+# Optional imports
+# -----------------------
 def _try_import(name: str):
-    try: return __import__(name)
-    except Exception: return None
+    try:
+        return __import__(name)
+    except Exception:
+        return None
 
 nbformat = _try_import("nbformat")
 pdfminer_high = None
@@ -37,514 +71,1074 @@ try:
     pdfminer_high = __import__("pdfminer.high_level", fromlist=["extract_text"])
 except Exception:
     pdfminer_high = None
+
 docx = _try_import("docx")
 PIL = _try_import("PIL")
 pytesseract = _try_import("pytesseract")
 docker = _try_import("docker")
 
+# -----------------------
+# Config & toggles
+# -----------------------
 USE_LLM = os.getenv("AUTOGRADER_USE_LLM", "0") == "1" and bool(os.getenv("OPENAI_API_KEY"))
-_openai = None
+REQUIRE_LLM = os.getenv("AUTOGRADER_REQUIRE_LLM", "1") == "1"
+ALLOW_NET = os.getenv("AUTOGRADER_ALLOW_NET_SETUP", "0") == "1"
+
+DEFAULT_IMAGE = os.getenv("AUTOGRADER_IMAGE_DEFAULT", "python:3.11")
+
+# Allowed images (assignment-agnostic but safety-constrained); override with AUTOGRADER_ALLOWED_IMAGES
+_default_allow = [
+    "python:3.12", "python:3.11", "python:3.10",
+    "node:20", "node:18",
+    "maven:3.9-eclipse-temurin-17",
+    "gradle:8.8-jdk17",
+    "gcc:13",
+    "golang:1.22",
+    "rust:1.79",
+    "ruby:3.3",
+    "php:8.3-cli",
+    "mcr.microsoft.com/dotnet/sdk:8.0"
+]
+_allowed_env = os.getenv("AUTOGRADER_ALLOWED_IMAGES", "")
+ALLOWED_IMAGES = [s.strip() for s in _allowed_env.split(",") if s.strip()] or _default_allow
+
+# OpenAI client
+_openai_client = None
 if USE_LLM:
     try:
-        OpenAI = getattr(importlib.import_module("openai"), "OpenAI", None)
-        _openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY")) if OpenAI else None
+        openai_mod = importlib.import_module("openai")
+        OpenAI = getattr(openai_mod, "OpenAI", None)
+        if OpenAI:
+            _openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        else:
+            _openai_client = openai_mod  # legacy
     except Exception:
-        _openai = None
+        _openai_client = None
 
-DEFAULT_TIMEOUT = int(os.getenv("AUTOGRADER_TIMEOUT_SEC", "180"))
-MAX_LOG = int(os.getenv("AUTOGRADER_MAX_LOG_BYTES", "200000"))
-
-# ------------------ PUBLIC ------------------
+# -----------------------
+# Public API
+# -----------------------
 def grade_submission(assignment, submission) -> Dict[str, Any]:
     start = time.time()
     logs: List[str] = []
     report: Dict[str, Any] = {"steps": []}
 
+    # Assignment context
     spec_text = (getattr(assignment, "description", "") or "").strip()
     spec_attachment_text = ""
     try:
         a_file = getattr(assignment, "file", None)
         if a_file and a_file.name:
-            spec_attachment_text = _read_django_file_text(a_file, logs)
+            spec_attachment_text = _extract_text_from_arbitrary_file(a_file, logs)
     except Exception as e:
-        logs.append(f"[warn] assignment attachment read failed: {e}")
+        logs.append(f"[warn] Failed reading assignment attachment: {e}")
 
-    root = _ensure_shared_root(logs)
-    tmp_dir = Path(tempfile.mkdtemp(prefix="autograde_", dir=str(root)))
-    orig_name = Path(submission.file.name).name
-    local_path = tmp_dir / orig_name
+    # Prepare shared workroot
     try:
-        f = submission.file.open("rb")
-        with open(local_path, "wb") as out: shutil.copyfileobj(f, out)
-        f.close()
+        shared_root = Path(os.getenv("GRADER_SHARED_DIR", "/grader-shared"))
+        shared_root.mkdir(parents=True, exist_ok=True)
     except Exception as e:
-        logs.append(f"[error] could not download submission: {e}")
-        return _final("failed", 0.0, "Could not read your file from storage.", report, _pack(logs), start)
+        logs.append(f"[warn] Could not ensure shared dir; fallback to tmp: {e}")
+        shared_root = Path(tempfile.gettempdir())
 
+    workroot = Path(tempfile.mkdtemp(prefix="autograde_", dir=str(shared_root)))
+    orig_name = Path(submission.file.name).name
+    local_path = workroot / orig_name
+    try:
+        with submission.file.open("rb") as f, open(local_path, "wb") as out:
+            shutil.copyfileobj(f, out)
+    except Exception as e:
+        logs.append(f"[error] Could not read submission from storage: {e}")
+        return _final("failed", 0.0, "Could not read your file from storage.", report, "\n".join(logs), start)
+
+    # Decide: archive vs single file vs doc
     name = orig_name.lower()
-    mt = mimetypes.guess_type(name)[0] or "application/octet-stream"
-    report.update({"filename": name, "mimetype": mt, "shared_dir": str(tmp_dir)})
+    mimetype = mimetypes.guess_type(name)[0] or "application/octet-stream"
+    report["filename"] = name
+    report["mimetype"] = mimetype
+    report["workroot"] = str(workroot)
 
     try:
         if _is_archive(name):
-            res = _handle_archive(tmp_dir, local_path, name, spec_text, spec_attachment_text, logs, report)
+            result = _handle_archive_with_ai_plan(workroot, local_path, name, spec_text, spec_attachment_text, logs, report)
         elif name.endswith(".ipynb"):
-            res = _handle_notebook(tmp_dir, local_path, spec_text, spec_attachment_text, logs, report)
+            result = _handle_notebook(workroot, local_path, name, spec_text, spec_attachment_text, logs, report)
         elif _looks_like_code(name):
-            res = _handle_single_code(tmp_dir, local_path, name, spec_text, spec_attachment_text, logs, report)
-        elif name.endswith(".pdf") or "pdf" in mt:
-            res = _llm_grade_textual(_extract_pdf(local_path, logs), spec_text, spec_attachment_text, {"type":"pdf"}, logs, report)
-        elif name.endswith(".docx") or "word" in mt:
-            res = _llm_grade_textual(_extract_docx(local_path, logs), spec_text, spec_attachment_text, {"type":"docx"}, logs, report)
-        elif name.endswith(".txt") or name.endswith(".md") or mt.startswith("text/"):
-            res = _llm_grade_textual(_safe_read(local_path, logs), spec_text, spec_attachment_text, {"type":"text"}, logs, report)
-        elif _looks_like_img(name, mt):
-            res = _llm_grade_textual(_extract_img(local_path, logs), spec_text, spec_attachment_text, {"type":"image"}, logs, report)
+            result = _handle_single_code(workroot, local_path, name, spec_text, spec_attachment_text, logs, report)
+        elif name.endswith(".pdf") or "pdf" in mimetype:
+            text = _extract_text_from_pdf(local_path, logs)
+            result = _llm_grade_textual(text, spec_text, spec_attachment_text, {"type": "pdf"}, logs, report)
+        elif name.endswith(".docx") or "word" in mimetype:
+            text = _extract_text_from_docx(local_path, logs)
+            result = _llm_grade_textual(text, spec_text, spec_attachment_text, {"type": "docx"}, logs, report)
+        elif name.endswith(".txt") or name.endswith(".md") or "text" in mimetype:
+            text = _safe_read_text(local_path, logs)
+            result = _llm_grade_textual(text, spec_text, spec_attachment_text, {"type": "text"}, logs, report)
+        elif _looks_like_image(name, mimetype):
+            text = _extract_text_from_image(local_path, logs)
+            result = _llm_grade_textual(text, spec_text, spec_attachment_text, {"type": "image"}, logs, report)
         else:
-            res = _llm_grade_textual(_peek_bin(local_path, logs), spec_text, spec_attachment_text, {"type":"binary"}, logs, report)
+            text = _best_effort_binary_peek(local_path, logs)
+            result = _llm_grade_textual(text, spec_text, spec_attachment_text, {"type": "binary"}, logs, report)
     except Exception as e:
-        logs.append(f"[error] pipeline crashed: {e}")
-        res = _final("failed", 5.0, "We could not analyze your file; please re-check submission.", report, _pack(logs), start)
+        logs.append(f"[error] Pipeline crashed: {e}")
+        result = _final("failed", 5.0, "We could not analyze your file; please re-check submission.", report, "\n".join(logs), start)
 
-    try: shutil.rmtree(tmp_dir, ignore_errors=True)
-    except Exception: pass
+    # Cleanup
+    try:
+        shutil.rmtree(workroot, ignore_errors=True)
+    except Exception:
+        pass
 
-    return res
+    # Leniency floor if work detected
+    if result["status"] in ("done", "partial") and result.get("grade_pct", 0) < 40 and report.get("detected_work", False):
+        result["logs"] += "\n[policy] Leniency floor applied because work was detected."
+        result["grade_pct"] = max(result.get("grade_pct", 0), 40.0)
+
+    return result
+
 
 def apply_result_to_submission(submission, result: Dict[str, Any]) -> None:
     if hasattr(submission, "grade_pct"):
-        g = result.get("grade_pct", None)
-        submission.grade_pct = float(g) if g is not None else None
+        grade = result.get("grade_pct", None)
+        submission.grade_pct = float(grade) if grade is not None else None
     if hasattr(submission, "ai_feedback"):
-        submission.ai_feedback = result.get("feedback", "") or ""
+        submission.ai_feedback = str(result.get("feedback", ""))
     if hasattr(submission, "autograde_status"):
         submission.autograde_status = result.get("status", "done")
     if hasattr(submission, "autograde_report"):
-        submission.autograde_report = result.get("report", {}) or {}
+        try:
+            submission.autograde_report = result.get("report", {})
+        except Exception:
+            submission.autograde_report = {}
     if hasattr(submission, "runner_logs"):
-        submission.runner_logs = result.get("logs", "") or ""
+        submission.runner_logs = str(result.get("logs", ""))
 
-# ------------------ TYPE ROUTERS ------------------
-def _is_archive(n: str) -> bool:
-    n = n.lower()
-    return n.endswith(".zip") or n.endswith(".tar") or n.endswith(".tar.gz") or n.endswith(".tgz")
-
-def _looks_like_code(n: str) -> bool:
-    return n.lower().endswith((".py",".sh",".js",".ts",".java",".c",".cc",".cpp",".go",".rs",".rb",".php",".cs"))
-
-def _looks_like_img(n: str, mt: str) -> bool:
-    return n.lower().endswith((".png",".jpg",".jpeg",".gif",".bmp",".webp",".tiff",".svg")) or (mt and mt.startswith("image/"))
-
-def _handle_archive(tmp_dir: Path, local: Path, filename: str, spec: str, attach: str, logs: List[str], report: Dict[str,Any]) -> Dict[str,Any]:
-    work = tmp_dir / "work"
-    work.mkdir(exist_ok=True)
+# -----------------------
+# Core: AI-planned archive/project handling
+# -----------------------
+def _handle_archive_with_ai_plan(workroot: Path, local_path: Path, filename: str, spec_text: str, spec_attach: str,
+                                 logs: List[str], report: Dict[str, Any]) -> Dict[str, Any]:
+    # Extract
+    projdir = workroot / "work"
+    projdir.mkdir(exist_ok=True)
+    report["detected_work"] = True
     try:
         if filename.endswith(".zip"):
-            with zipfile.ZipFile(local, "r") as zf: zf.extractall(work)
+            with zipfile.ZipFile(local_path, "r") as zf:
+                zf.extractall(projdir)
         else:
-            with tarfile.open(local, "r:*") as tf: tf.extractall(work)
-        logs.append(f"[ok] extracted archive -> {work}")
+            with tarfile.open(local_path, "r:*") as tf:
+                tf.extractall(projdir)
+        logs.append(f"[ok] Archive extracted into {projdir}")
+        logs.append(f"Professor: tree_root => {projdir}")
     except Exception as e:
-        logs.append(f"[error] archive extract failed: {e}")
-        return _llm_grade_textual(_peek_bin(local, logs), spec, attach, {"type":"archive-unreadable"}, logs, report)
+        logs.append(f"[error] Could not extract archive: {e}")
+        snapshot = _best_effort_binary_peek(local_path, logs)
+        return _llm_grade_textual(snapshot, spec_text, spec_attach, {"type": "archive-corrupt"}, logs, report)
 
-    report["file_tree"] = _list_files(work)[:3000]
-
-    if nbformat:
-        nbs = list(work.rglob("*.ipynb"))
-        if nbs:
-            return _handle_notebook(tmp_dir, nbs[0], spec, attach, logs, report, sourced=True)
-
-    # If any report-only files inside:
-    has_report = any(p.suffix.lower() in (".pdf",".docx",".txt",".md") for p in work.rglob("*") if p.is_file())
-    if has_report:
-        snap = _snapshot_text(work, logs)
-        return _llm_grade_textual(snap, spec, attach, {"type":"archive-report"}, logs, report)
-
-    langs = _detect_langs(work)
+    # Inventory
+    files = _list_files(projdir)
+    report["file_tree"] = files[:20000]
+    langs = _detect_languages(projdir)
     report["languages"] = langs
-    if langs:
-        primary = langs[0]["language"]
-        return _build_run_project(work, primary, spec, attach, logs, report)
+    tree_summary = _compose_tree_summary(projdir, files)
+    tree_full = "\n".join(files)
+    report["tree_full_count"] = len(files)
+    report["candidate_roots"] = _candidate_roots(projdir)
+    if report["candidate_roots"]:
+        logs.append("Professor: candidate_roots => " + ", ".join(report["candidate_roots"][:20]))
 
-    snap = _snapshot_text(work, logs)
-    return _llm_grade_textual(snap, spec, attach, {"type":"archive-static"}, logs, report)
+    # If notebook present, shortcut to notebook executor
+    nb_files = [p for p in _iter_paths(projdir) if p.suffix.lower() == ".ipynb"]
+    if nb_files and nbformat:
+        best_nb = nb_files[0]
+        return _handle_notebook(workroot, best_nb, best_nb.name, spec_text, spec_attach, logs, report, sourced=True)
 
-def _handle_notebook(tmp_dir: Path, nb_path: Path|str, spec: str, attach: str, logs: List[str], report: Dict[str,Any], sourced: bool=False)->Dict[str,Any]:
+    # --- AI plan (first pass)
+    plan, plan_err = _plan_with_ai(projdir, tree_full, spec_text, report["candidate_roots"], logs)
+    if plan_err:
+        logs.append(f"[warn] Planner fallback due to: {plan_err}")
+        plan = _fallback_plan(projdir)  # generic
+
+    report["plan_initial"] = plan
+
+    ok, run_logs = _run_services_plan(projdir, plan)
+    full = run_logs[-200000:]
+    logs.append(full)
+    report["sandbox_full_log"] = full
+    # Track the *latest* run log for grading:
+    last_run_log = full
+    report["sandbox_last_log"] = last_run_log
+
+    # If failed, try ONE refinement with AI
+    if not ok and USE_LLM and _openai_client:
+        ref_plan, ref_err = _refine_plan_with_ai(projdir, tree_full, plan, full, report["candidate_roots"], logs)
+        if not ref_err and ref_plan:
+            report["plan_refined"] = ref_plan
+            ok2, run_logs2 = _run_services_plan(projdir, ref_plan)
+            full2 = run_logs2[-200000:]
+
+            logs[:] = ["=== RE-RUN (refined) ===\n" + full2]
+            report["sandbox_full_log"] = full2
+
+            ok = ok2
+        else:
+            logs.append(f"[warn] Refine plan failed: {ref_err or 'no plan returned'}")
+
+    # Grade via LLM (or heuristic) using ONLY the latest run’s output
+    context = {"type": "ai-plan", "ok": ok, "languages": langs}
+    grade_text = _compose_grade_context(tree_summary, report.get("sandbox_last_log", ""))
+    res = _llm_grade_textual(grade_text, spec_text, spec_attach, context, logs, report)
+
+    # Small bonus if ok
+    if ok:
+        res["grade_pct"] = max(res.get("grade_pct", 0), 80.0)
+        res["feedback"] = (res.get("feedback", "") + "\n\nProject executed successfully under AI-planned run.").strip()
+    else:
+        res["feedback"] = (res.get("feedback", "") + "\n\nWe could not fully run the project; graded based on files/logs.").strip()
+
+    return res
+
+# -----------------------
+# Planner (AI)
+# -----------------------
+PLANNER_SYSTEM = """You are a build/run planner for arbitrary student projects.
+- Output a concise JSON plan with a list of services to run in Docker.
+- Prefer minimal setup using language-native tools (pip, npm, maven/gradle, pytest, unittest).
+- Avoid OS package managers (no apt-get).
+- Do not start long-running servers; instead run checks/tests or one-shot scripts.
+- Assume no internet access unless you explicitly mark 'network': true (installer steps may still fail if network is blocked).
+- Keep timeouts modest (<= 240s).
+Schema:
+{
+  "services": [
+    {
+      "name": "string",
+      "image": "docker-image",
+      "workdir": "relative/path/within/tree or '.'",
+      "setup": ["cmd", "..."],        # optional
+      "run":   ["cmd", "..."],        # at least one
+      "env":   {"KEY":"VALUE"},       # optional
+      "network": false,               # optional, default false
+      "timeout": 180                  # optional, int seconds
+    }
+  ]
+}
+Return ONLY JSON.
+"""
+
+def _plan_with_ai(projdir: Path, tree_full: str, spec_text: str,
+                  candidate_roots: List[str], logs: List[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    if not (USE_LLM and _openai_client):
+        return None, "llm_unavailable"
+
+    hints = _collect_key_hints(projdir)
+    user_prompt = f"""FULL PROJECT TREE (all files, truncated if very large):
+<<<TREE
+{tree_full[:180000]}
+TREE>>>
+
+Candidate project roots (choose one for workdir):
+{json.dumps(candidate_roots, ensure_ascii=False, indent=2)}
+
+Key hints:
+{json.dumps(hints, ensure_ascii=False, indent=2)}
+
+Assignment (optional context):
+<<<SPEC
+{spec_text[:4000]}
+SPEC>>>
+
+Plan goals:
+- Pick the CORRECT workdir from the candidate list (or '.' if top-level).
+- Use minimal, safe commands (no apt-get).
+- If Maven/Gradle/pytest etc. exist, run tests; otherwise do quick checks (build/compile/lint).
+- Keep timeouts modest (<= 240s).
+Return STRICT JSON per schema."""
+    try:
+        text = _chat(user_prompt, PLANNER_SYSTEM)
+        data = _extract_json(text)
+        plan = _sanitize_plan(data)
+        if not plan or not plan.get("services"):
+            return None, "empty_plan"
+        return plan, None
+    except Exception as e:
+        logs.append(f"[warn] planner error: {e}")
+        return None, str(e)
+
+REFINER_SYSTEM = """You revise a failing run plan. Given the same tree and the previous plan + logs, produce a corrected plan.
+- Keep commands minimal and safe (no apt-get).
+- If the problem was choosing the wrong directory or language, fix workdir and/or commands.
+- Do not add servers that never exit; prefer tests or one-shot checks.
+Return ONLY JSON with the same schema as before."""
+
+def _refine_plan_with_ai(projdir: Path, tree_full: str, prior_plan: Dict[str, Any], logs_text: str,
+                         candidate_roots: List[str], logs: List[str]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    if not (USE_LLM and _openai_client):
+        return None, "llm_unavailable"
+
+    hints = _collect_key_hints(projdir)
+    user_prompt = f"""Previous plan:
+{json.dumps(prior_plan, ensure_ascii=False, indent=2)}
+
+FULL PROJECT TREE:
+<<<TREE
+{tree_full[:180000]}
+TREE>>>
+
+Candidate project roots:
+{json.dumps(candidate_roots, ensure_ascii=False, indent=2)}
+
+Key hints:
+{json.dumps(hints, ensure_ascii=False, indent=2)}
+
+Failure logs (tail):
+<<<LOGS
+{logs_text[-12000:]}
+LOGS>>>
+
+Revise the plan (pick the correct workdir if wrong). Return STRICT JSON."""
+    try:
+        text = _chat(user_prompt, REFINER_SYSTEM)
+        data = _extract_json(text)
+        plan = _sanitize_plan(data)
+        if not plan or not plan.get("services"):
+            return None, "empty_plan"
+        return plan, None
+    except Exception as e:
+        logs.append(f"[warn] refine error: {e}")
+        return None, str(e)
+
+def _sanitize_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
+    """Ensure plan is well-formed and safe; clamp timeouts; restrict images; default workdir='.'; auto-pick image for mvn/gradle."""
+    if not isinstance(plan, dict):
+        return {}
+    services = plan.get("services")
+    if not isinstance(services, list):
+        return {}
+    out: List[Dict[str, Any]] = []
+    for svc in services:
+        if not isinstance(svc, dict):
+            continue
+        name = str(svc.get("name") or f"svc{len(out)+1}")[:64]
+        image = str(svc.get("image") or DEFAULT_IMAGE)
+        workdir = str(svc.get("workdir") or ".")
+        setup = svc.get("setup") or []
+        run = svc.get("run") or []
+        if not isinstance(setup, list):
+            setup = []
+        if not isinstance(run, list):
+            run = []
+
+        # Auto-pick image if commands clearly require maven/gradle/node
+        joined = " && ".join([*map(str, setup), *map(str, run)]).lower()
+        if ("mvn" in joined or "maven" in joined):
+            mvn_img = next((i for i in ALLOWED_IMAGES if i.startswith("maven:")), None)
+            if mvn_img:
+                image = mvn_img
+        elif "gradle" in joined:
+            gr_img = next((i for i in ALLOWED_IMAGES if i.startswith("gradle:")), None)
+            if gr_img:
+                image = gr_img
+        elif any(tok in joined for tok in ("npm ", "pnpm", "yarn", "node ")):
+            nd_img = next((i for i in ALLOWED_IMAGES if i.startswith("node:")), None)
+            if nd_img:
+                image = nd_img
+
+        env = svc.get("env") or {}
+        if not isinstance(env, dict):
+            env = {}
+        network = bool(svc.get("network", False))
+        timeout = int(svc.get("timeout") or 180)
+        timeout = max(30, min(timeout, 240))
+
+        out.append({
+            "name": name,
+            "image": image if image in ALLOWED_IMAGES else DEFAULT_IMAGE,
+            "workdir": workdir,
+            "setup": [str(c) for c in setup][:12],
+            "run": [str(c) for c in run][:12] or ["echo 'no-op'"],
+            "env": {str(k)[:64]: str(v)[:200] for k, v in env.items()},
+            "network": bool(network),
+            "timeout": timeout
+        })
+    return {"services": out}
+
+def _chat(user_content: str, system_content: str) -> str:
+    model = os.getenv("OPENAI_MODEL", "gpt-5-mini")
+    if hasattr(_openai_client, "chat") and hasattr(_openai_client.chat, "completions"):
+        resp = _openai_client.chat.completions.create(
+            model=model,
+            messages=[{"role": "system", "content": system_content},
+                      {"role": "user", "content": user_content}],
+        )
+        return resp.choices[0].message.content or ""
+    else:
+        # legacy client
+        resp = _openai_client.ChatCompletion.create(
+            model=model,
+            messages=[{"role": "system", "content": system_content},
+                      {"role": "user", "content": user_content}],
+        )
+        return resp.choices[0].message["content"] or ""
+
+# -----------------------
+# Execute plan in Docker
+# -----------------------
+def _run_services_plan(projdir: Path, plan: Dict[str, Any]) -> Tuple[bool, str]:
+    if docker is None:
+        return False, "[sandbox] Docker not available."
+    services = plan.get("services") or []
+    if not services:
+        return False, "[plan] No services."
+
+    client = docker.from_env()
+    full_logs = []
+    ok_any = False
+
+    for svc in services:
+        name = svc["name"]
+        image = svc["image"]
+        network = "bridge" if (ALLOW_NET and svc.get("network")) else "none"
+        timeout = int(svc.get("timeout") or 180)
+
+        # Workdir path: resolve against projdir, fallback to best markers
+        work_rel = svc.get("workdir") or "."
+        svc_root = (projdir / work_rel).resolve()
+        if not svc_root.exists() or not svc_root.is_dir():
+            best = _best_root_by_markers(projdir)
+            if best:
+                svc_root = best.resolve()
+
+        volumes = {str(svc_root): {"bind": "/work", "mode": "rw"}}
+
+        setup_cmd = " && ".join([_safe_cmd(c) for c in (svc.get("setup") or [])])
+        run_cmd = " && ".join([_safe_cmd(c) for c in (svc.get("run") or [])]) or "echo no-op"
+
+        compound = f"{f'({setup_cmd}) || true; ' if setup_cmd else ''}({run_cmd})"
+
+        env = {k: str(v) for k, v in (svc.get("env") or {}).items()}
+        env = {k: v for k, v in env.items() if k.upper() != "PATH"}
+
+        # Professor-visible debug prefix
+        debug_head = (f"=== SERVICE {name} ({image}) ===\n"
+                      f"Professor: workdir (host) => {svc_root}\n"
+                      f"Professor: setup => {setup_cmd or '(none)'}\n"
+                      f"Professor: run   => {run_cmd}\n"
+                      f"Professor: network => {'on' if network != 'none' else 'off'}, timeout => {timeout}s\n")
+
+        try:
+            container = client.containers.run(
+                image,
+                ['sh', '-lc', compound],
+                detach=True,
+                working_dir="/work",
+                network_mode=network,
+                mem_limit="1g",
+                nano_cpus=2_000_000_000,
+                volumes=volumes,
+                environment=env,
+            )
+        except Exception as e:
+            full_logs.append(debug_head + f"[create-error] {e}")
+            continue
+
+        try:
+            ok = _poll_wait_or_kill(container, timeout)
+        finally:
+            try:
+                clog = container.logs(stdout=True, stderr=True, tail=20000).decode("utf-8", "ignore")
+            except Exception:
+                clog = ""
+            try:
+                container.remove(force=True)
+            except Exception:
+                pass
+
+        full_logs.append(debug_head + clog)
+        ok_any = ok_any or ok
+
+    return ok_any, "\n".join(full_logs)
+
+def _poll_wait_or_kill(container, timeout: int) -> bool:
+    start = time.time()
+    try:
+        while True:
+            container.reload()
+            state = container.attrs.get("State", {})
+            status = state.get("Status")
+            if status in ("exited", "dead"):
+                exit_code = state.get("ExitCode", 1)
+                return int(exit_code or 1) == 0
+            if time.time() - start > timeout:
+                try:
+                    container.kill()
+                except Exception:
+                    pass
+                return False
+            time.sleep(1.0)
+    except Exception:
+        try:
+            container.kill()
+        except Exception:
+            pass
+        return False
+
+def _safe_cmd(cmd: str) -> str:
+    # Light sanitization: prevent backgrounding/daemons; forbid redirection to special files.
+    bad = ["&>", ">/dev", "nohup ", "daemon", "systemctl", "service "]
+    out = cmd
+    for b in bad:
+        out = out.replace(b, " ")
+    return out.strip()[:2000]
+
+# -----------------------
+# Notebook & single-file
+# -----------------------
+def _handle_notebook(workroot: Path, notebook_path: Path | str, filename: str, spec_text: str, spec_attach: str,
+                     logs: List[str], report: Dict[str, Any], sourced: bool = False) -> Dict[str, Any]:
+    report["detected_work"] = True
     if not nbformat:
-        return _llm_grade_textual(_safe_read(nb_path, logs), spec, attach, {"type":"ipynb-static"}, logs, report)
-    run_dir = tmp_dir / "nb_run"; run_dir.mkdir(exist_ok=True)
-    nb_in = Path(nb_path) if sourced else run_dir / "notebook.ipynb"
-    if not sourced: shutil.copy2(nb_path, nb_in)
+        logs.append("[info] nbformat not installed; static review.")
+        text = _safe_read_text(notebook_path, logs)
+        return _llm_grade_textual(text, spec_text, spec_attach, {"type": "ipynb-static"}, logs, report)
+
+    run_dir = workroot / "nb_run"
+    run_dir.mkdir(exist_ok=True)
+    nb_in = Path(notebook_path) if sourced else run_dir / "notebook.ipynb"
+    if not sourced:
+        shutil.copy2(notebook_path, nb_in)
 
     try:
-        cmd = [os.getenv("PYTHON","python"), "-m", "jupyter", "nbconvert", "--to","notebook",
-               "--execute", str(nb_in), f"--ExecutePreprocessor.timeout={min(240,DEFAULT_TIMEOUT)}", "--output","executed.ipynb"]
-        cp = subprocess.run(cmd, cwd=nb_in.parent, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=DEFAULT_TIMEOUT+60)
-        out = cp.stdout[-20000:]
+        nb = nbformat.read(nb_in, as_version=4)
+        nb.cells.append(nbformat.v4.new_code_cell("# Auto-eval\nprint('OK')"))
+        nbformat.write(nb, nb_in)
+    except Exception as e:
+        logs.append(f"[warn] Could not append eval cell: {e}")
+
+    try:
+        cmd = [
+            "python", "-m", "jupyter", "nbconvert",
+            "--to", "notebook", "--execute", str(nb_in),
+            "--ExecutePreprocessor.timeout=180", "--output", "executed.ipynb"
+        ]
+        cp = subprocess.run(cmd, cwd=run_dir if not sourced else nb_in.parent,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=240, text=True)
+        out = (cp.stdout or "")[-200000:]
         logs.append(out)
-        executed = nb_in.parent/"executed.ipynb"
-        txt = ""
+        executed = (run_dir / "executed.ipynb") if not sourced else (nb_in.parent / "executed.ipynb")
         if executed.exists():
             try:
                 nb2 = nbformat.read(executed, as_version=4)
-                txt = _nb_text(nb2)
-            except Exception as e: logs.append(f"[warn] executed nb parse failed: {e}")
-        res = _llm_grade_textual(f"NOTEBOOK OUTPUT:\n{txt}\n\nRUN LOG TAIL:\n{out[-4000:]}", spec, attach, {"type":"ipynb-exec"}, logs, report)
-        if cp.returncode==0:
-            res["feedback"] = (res.get("feedback","")+"\n\nBonus: notebook executed successfully.").strip()
-            res["grade_pct"] = max(res.get("grade_pct",0), 80.0)
+                out_text = _notebook_text(nb2)
+            except Exception:
+                out_text = "(Could not re-open executed notebook)"
         else:
-            res["feedback"] = (res.get("feedback","")+"\n\nNote: execution errors occurred; graded leniently.").strip()
-            res["grade_pct"] = max(res.get("grade_pct",0), 55.0)
+            out_text = "(No executed notebook produced)"
+        text_for_llm = f"NOTEBOOK OUTPUT:\n{out_text}\n\nLOG TAIL:\n{out[-4000:]}"
+        res = _llm_grade_textual(text_for_llm, spec_text, spec_attach, {"type": "ipynb-exec"}, logs, report)
+        if cp.returncode == 0:
+            res["grade_pct"] = max(res.get("grade_pct", 0), 80.0)
+            res["feedback"] = (res.get("feedback", "") + "\n\nNotebook executed without errors.").strip()
+        else:
+            res["feedback"] = (res.get("feedback", "") + "\n\nNotebook execution had errors; graded leniently.").strip()
         return res
     except Exception as e:
-        logs.append(f"[warn] notebook exec failed: {e}")
-        return _llm_grade_textual(_safe_read(nb_in, logs), spec, attach, {"type":"ipynb-static"}, logs, report)
+        logs.append(f"[warn] Notebook execution failed: {e}")
+        text = _safe_read_text(nb_in, logs)
+        return _llm_grade_textual(text, spec_text, spec_attach, {"type": "ipynb-static"}, logs, report)
 
-def _handle_single_code(tmp_dir: Path, local: Path, filename: str, spec: str, attach: str, logs: List[str], report: Dict[str,Any])->Dict[str,Any]:
-    lang = _ext2lang(Path(filename).suffix.lower())
-    ran, ok, out = _run_single(local, lang, DEFAULT_TIMEOUT)
-    logs.append(out[-20000:])
-    res = _llm_grade_textual(f"RUNTIME OUTPUT TAIL:\n{out[-6000:]}", spec, attach, {"type":f"single-{lang or 'code'}"}, logs, report)
-    missing = ("No such file or directory" in out) or ("can't open file" in out) or ("ModuleNotFoundError" in out and lang=="python")
+def _handle_single_code(workroot: Path, local_path: Path, filename: str, spec_text: str, spec_attach: str,
+                        logs: List[str], report: Dict[str, Any]) -> Dict[str, Any]:
+    lang = _ext_to_lang(Path(filename).suffix.lower())
+    ran, ok, run_logs = _run_single_file_in_sandbox(local_path, lang, timeout=60)
+    full = run_logs[-200000:]
+    logs.append(full)
+    report["sandbox_full_log"] = full
+    report["detected_work"] = True
+
+    text_for_llm = f"RUNTIME STDOUT/STDERR (full, truncated):\n{full}"
+    res = _llm_grade_textual(text_for_llm, spec_text, spec_attach, {"type": f"single-{lang or 'code'}"}, logs, report)
+
+    missing_file = ("No such file or directory" in run_logs) or ("can't open file" in run_logs) or ("not found" in run_logs)
+
     if ran and ok:
-        res["grade_pct"] = max(res.get("grade_pct",0), 75.0); res["feedback"]=(res.get("feedback","")+"\n\nProgram ran successfully.").strip()
-    elif missing:
-        res["grade_pct"] = min(res.get("grade_pct",100.0), 5.0); res["status"]="failed"
-        res["feedback"]="No runnable entry found. Please upload a correct entry point (e.g., .py or proper build)."
-    elif ran:
-        res["grade_pct"] = min(res.get("grade_pct",100.0), 25.0); res["feedback"]=(res.get("feedback","")+"\n\nProgram executed with errors.").strip()
+        res["grade_pct"] = max(res.get("grade_pct", 0), 75.0)
+        res["feedback"] = (res.get("feedback", "") + "\n\nProgram ran successfully.").strip()
+    elif missing_file:
+        report["detected_work"] = False
+        res["grade_pct"] = 5.0
+        res["status"] = "failed"
+        res["feedback"] = "No runnable file was found. Please upload code or a supported archive."
+    elif ran and not ok:
+        res["grade_pct"] = min(res.get("grade_pct", 100.0), 25.0)
+        res["feedback"] = (res.get("feedback", "") + "\n\nProgram executed with errors.").strip()
     else:
-        res["grade_pct"] = min(res.get("grade_pct",100.0), 15.0); res["feedback"]=(res.get("feedback","")+"\n\nCould not execute; static review only.").strip()
+        res["grade_pct"] = min(res.get("grade_pct", 100.0), 15.0)
+        res["feedback"] = (res.get("feedback", "") + "\n\nCould not execute; static review only.").strip()
     return res
 
-# ------------------ PROJECT RUN ------------------
-def _build_run_project(workdir: Path, lang: str, spec: str, attach: str, logs: List[str], report: Dict[str,Any])->Dict[str,Any]:
-    ran, ok, out = _run_project(workdir, lang, DEFAULT_TIMEOUT)
-    logs.append(out[-40000:])
-    tree = "\n".join(report.get("file_tree", [])[:2000])
-    res = _llm_grade_textual(f"BUILD/RUN LOG TAIL:\n{out[-8000:]}\n\nFILE TREE (first 2000 lines):\n{tree}",
-                             spec, attach, {"type":f"project-{lang}"}, logs, report)
-    if ran and ok:
-        res["feedback"]=(res.get("feedback","")+"\n\nProject built and ran.").strip()
-        res["grade_pct"]=max(res.get("grade_pct",0), 80.0)
-    elif ran:
-        res["feedback"]=(res.get("feedback","")+"\n\nBuild/run issues; graded leniently.").strip()
-        res["grade_pct"]=max(res.get("grade_pct",0), 60.0)
-    else:
-        res["feedback"]=(res.get("feedback","")+"\n\nCould not build/run; static review only.").strip()
-        res["grade_pct"]=max(res.get("grade_pct",0), 50.0)
-    return res
-
-def _run_single(path: Path, lang: Optional[str], timeout: int) -> Tuple[bool,bool,str]:
-    if os.getenv("AUTOGRADER_DISABLE_DOCKER")=="1" and os.getenv("AUTOGRADER_ENABLE_LOCAL_EXEC")!="1":
-        return False, False, "[safe] execution disabled"
-    try:
-        if docker and os.getenv("AUTOGRADER_DISABLE_DOCKER")!="1": return _docker_single(path, lang, timeout)
-        if os.getenv("AUTOGRADER_ENABLE_LOCAL_EXEC")=="1": return _local_single(path, lang, timeout)
-    except Exception as e:
-        return True, False, f"[error] runner crashed: {e}"
-    return False, False, "[safe] no runner available"
-
-def _run_project(workdir: Path, lang: str, timeout: int) -> Tuple[bool,bool,str]:
-    if os.getenv("AUTOGRADER_DISABLE_DOCKER")=="1" and os.getenv("AUTOGRADER_ENABLE_LOCAL_EXEC")!="1":
-        return False, False, "[safe] execution disabled"
-    try:
-        if docker and os.getenv("AUTOGRADER_DISABLE_DOCKER")!="1": return _docker_project(workdir, lang, timeout)
-        if os.getenv("AUTOGRADER_ENABLE_LOCAL_EXEC")=="1": return _local_project(workdir, lang, timeout)
-    except Exception as e:
-        return True, False, f"[error] runner crashed: {e}"
-    return False, False, "[safe] no runner available"
-
-# ---- Docker helpers ----
-def _image(lang: Optional[str], project=False) -> str:
-    if lang in ("python", None): return os.getenv("AUTOGRADER_DOCKER_IMAGE_DS" if project else "AUTOGRADER_DOCKER_IMAGE_PY", "python:3.11")
-    return {
-        "node":"node:20", "java":"maven:3.9-eclipse-temurin-17", "c":"gcc:13", "cpp":"gcc:13",
-        "go":"golang:1.22","rust":"rust:1.79","ruby":"ruby:3.3","php":"php:8.3-cli","dotnet":"mcr.microsoft.com/dotnet/sdk:8.0"
-    }.get(lang, "python:3.11")
-
-def _cmd_single(file_in: str, lang: Optional[str]) -> List[str]:
-    if lang=="python" or file_in.endswith(".py"): return ["python", file_in]
-    if lang=="bash" or file_in.endswith(".sh"):  return ["bash", file_in]
-    if lang=="node" or file_in.endswith((".js",".ts")): return ["sh","-lc",f"node {shq(file_in)} || (echo 'no node entry' && false)"]
-    return ["sh","-lc", f"echo 'No direct runner for {shq(file_in)}' && false"]
-
-def _cmd_project(lang: str) -> List[str]:
-    # Boot briefly & probe common local ports; then stop.
-    probe = "for p in 3000 5000 5173 8000 8080 4200; do (curl -s -I http://127.0.0.1:$p || true); done"
-    if lang=="python":
-        return ["sh","-lc","python -V; if [ -f requirements.txt ]; then pip -q install -r requirements.txt || true; fi; "
-                         "(pytest -q || true); (python app.py || python main.py || true) & sleep 7; "+probe+"; pkill -f python || true; true"]
-    if lang=="node":
-        return ["sh","-lc","node -v; if [ -f package.json ]; then (npm ci --silent || npm i --silent) || true; "
-                         "(npm test --silent || true); (npm run start --silent || node . || true) & sleep 7; "+probe+"; pkill -f node || true; true"]
-    if lang=="java":
-        return ["sh","-lc","(test -f mvnw && chmod +x mvnw || true); if [ -f pom.xml ]; then (./mvnw -q -DskipTests package || mvn -q -DskipTests package || true); "
-                         "(java -jar target/*.jar || true) & sleep 8; "+probe+"; pkill -f java || true; true; else echo 'no pom.xml'; fi"]
-    if lang in ("c","cpp"):
-        return ["sh","-lc","(test -f Makefile && make -s || (find -name '*.c' -o -name '*.cpp' | xargs -r gcc -O2 -std=c11 -o app && ./app || true)) || true"]
-    if lang=="go":
-        return ["sh","-lc","go version; (go test ./... || true); (go run . || true) & sleep 7; "+probe+"; pkill -f go || true; true"]
-    if lang=="rust":
-        return ["sh","-lc","cargo --version; (cargo test -q || true); (cargo run -q || true) & sleep 8; "+probe+"; pkill -f cargo || true; true"]
-    if lang=="dotnet":
-        return ["sh","-lc","dotnet --info; (dotnet build -clp:ErrorsOnly || true); (dotnet test -l:trx || true); true"]
-    if lang=="ruby":
-        return ["sh","-lc","ruby -v; (ruby main.rb || true) & sleep 6; "+probe+"; pkill -f ruby || true; true"]
-    if lang=="php":
-        return ["sh","-lc","php -v; (php -S 127.0.0.1:8000 -t . & sleep 6; "+probe+"; pkill -f 'php -S' || true) || true"]
-    return ["sh","-lc","echo 'No project runner for this language'; true"]
-
-def _docker_single(path: Path, lang: Optional[str], timeout: int)->Tuple[bool,bool,str]:
+def _run_single_file_in_sandbox(path: Path, lang: Optional[str], timeout: int = 60) -> Tuple[bool, bool, str]:
+    if docker is None:
+        return False, False, "[sandbox] Docker not available."
+    image = DEFAULT_IMAGE if (lang in (None, "python")) else _image_for_lang(lang)
+    if image not in ALLOWED_IMAGES:
+        image = DEFAULT_IMAGE
+    cmd = _cmd_for_single(path.name, lang)
     client = docker.from_env()
-    vols = {str(path.parent): {"bind": "/work", "mode": "ro"}}
-    c = client.containers.run(_image(lang), _cmd_single("/work/"+path.name, lang),
-                              detach=True, working_dir="/work", network_mode="none",
-                              mem_limit="768m", nano_cpus=1_000_000_000, volumes=vols)
-    try: ok = _wait_or_kill(c, timeout)
+    volumes = {str(path.parent): {"bind": "/work", "mode": "ro"}}
+    try:
+        c = client.containers.run(
+            image, cmd, detach=True, working_dir="/work",
+            network_mode="none", mem_limit="512m", nano_cpus=1_000_000_000, volumes=volumes
+        )
+    except Exception as e:
+        return False, False, f"[create-error] {e}"
+    try:
+        ok = _poll_wait_or_kill(c, timeout)
     finally:
-        out = _logs(c); _rm(c)
-    return True, ok, out
-
-def _docker_project(workdir: Path, lang: str, timeout: int)->Tuple[bool,bool,str]:
-    client = docker.from_env()
-    vols = {str(workdir): {"bind": "/work", "mode": "rw"}}
-    c = client.containers.run(_image(lang, True), _cmd_project(lang),
-                              detach=True, working_dir="/work", network_mode="none",
-                              mem_limit="2g", nano_cpus=2_000_000_000, volumes=vols)
-    try: ok = _wait_or_kill(c, timeout)
-    finally:
-        out = _logs(c); _rm(c)
-    return True, ok, out
-
-def _wait_or_kill(container, timeout:int)->bool:
-    start=time.time()
-    while True:
         try:
-            container.reload()
-            st = container.attrs.get("State", {})
-            if st.get("Status") in ("exited","dead"):
-                return int(st.get("ExitCode",1) or 1)==0
+            out = c.logs(stdout=True, stderr=True, tail=10000).decode("utf-8", "ignore")
         except Exception:
+            out = ""
+        try:
+            c.remove(force=True)
+        except Exception:
+            pass
+    return True, ok, out
+
+def _image_for_lang(lang: Optional[str]) -> str:
+    m = {
+        "python": "python:3.11", "bash": "python:3.11",
+        "node": "node:20", "java": "maven:3.9-eclipse-temurin-17",
+        "c": "gcc:13", "cpp": "gcc:13", "go": "golang:1.22",
+        "rust": "rust:1.79", "ruby": "ruby:3.3", "php": "php:8.3-cli",
+        "dotnet": "mcr.microsoft.com/dotnet/sdk:8.0"
+    }
+    return m.get(lang or "", DEFAULT_IMAGE)
+
+def _cmd_for_single(fname: str, lang: Optional[str]) -> List[str]:
+    p = "/work/" + fname
+    if lang in (None, "python") or fname.endswith(".py"):
+        return ["python", p]
+    if lang == "bash" or fname.endswith(".sh"):
+        return ["bash", p]
+    if lang == "node" or fname.endswith((".js", ".ts")):
+        return ["node", p]
+    # default: no direct runner
+    return ["sh", "-lc", f"echo 'No direct runner for {fname}' && false"]
+
+# -----------------------
+# Inventory & hints
+# -----------------------
+def _iter_paths(root: Path):
+    for p in root.rglob("*"):
+        if p.is_file():
+            yield p
+
+def _list_files(root: Path) -> List[str]:
+    out: List[str] = []
+    for p in root.rglob("*"):
+        if p.is_file():
+            try:
+                rel = str(p.relative_to(root))
+            except Exception:
+                rel = str(p)
+            out.append(rel)
+        if len(out) >= 20000:  # cap to keep prompt size reasonable
             break
-        if time.time()-start>timeout:
-            try: container.kill()
-            except Exception: pass
-            return False
-        time.sleep(1.0)
+    out.sort()
+    return out
 
-def _logs(container)->str:
+def _candidate_roots(root: Path) -> List[str]:
+    candidates = set()
+    markers = {"manage.py", "pom.xml", "package.json", "pyproject.toml", "build.gradle"}
+    for p in root.rglob("*"):
+        if p.is_file() and p.name.lower() in markers:
+            try:
+                candidates.add(str(p.parent.relative_to(root)))
+            except Exception:
+                pass
+    for d in root.rglob("src/main/java"):
+        if d.is_dir():
+            try:
+                candidates.add(str(d.parent.parent.relative_to(root)))  # project root above src
+            except Exception:
+                pass
+    # rank deeper first
+    return sorted(candidates, key=lambda s: (len(Path(s).parts), s), reverse=True)
+
+def _best_root_by_markers(root: Path) -> Optional[Path]:
+    cands = _candidate_roots(root)
+    for rel in cands:
+        d = (root / rel)
+        if d.exists() and d.is_dir():
+            return d
+    return None
+
+def _detect_languages(root: Path) -> List[Dict[str, Any]]:
+    counts: Dict[str, int] = {}
+    for p in _iter_paths(root):
+        ext = p.suffix.lower()
+        lang = _ext_to_lang(ext)
+        if lang:
+            counts[lang] = counts.get(lang, 0) + 1
+        name = p.name.lower()
+        if name in ("pom.xml", "build.gradle", "package.json", "requirements.txt", "pyproject.toml", "makefile", "cmakelists.txt"):
+            counts[name] = counts.get(name, 0) + 5
+    ranked = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    return [{"language": k, "score": v} for k, v in ranked]
+
+def _ext_to_lang(ext: str) -> Optional[str]:
+    m = {
+        ".py": "python", ".ipynb": "python", ".sh": "bash", ".js": "node", ".ts": "node",
+        ".java": "java", ".c": "c", ".cc": "cpp", ".cpp": "cpp", ".go": "go", ".rs": "rust",
+        ".rb": "ruby", ".php": "php", ".cs": "dotnet"
+    }
+    return m.get(ext)
+
+def _compose_tree_summary(root: Path, files: List[str], max_lines: int = 400) -> str:
+    lines = []
+    for rel in files[:3000]:
+        parts = rel.split("/")
+        if len(parts) <= 10:
+            lines.append(rel)
+        if len(lines) >= max_lines:
+            break
+    return "\n".join(lines)
+
+def _collect_key_hints(root: Path) -> Dict[str, Any]:
+    hints: Dict[str, Any] = {}
+    # quick flags
     try:
-        raw = container.logs(stdout=True, stderr=True)
-        s = raw.decode("utf-8","ignore") if isinstance(raw,bytes) else str(raw)
-        return s[-MAX_LOG:]
+        hints["has_manage_py"] = any(p.name == "manage.py" for p in _iter_paths(root))
+        hints["has_requirements"] = any(p.name == "requirements.txt" for p in _iter_paths(root))
+        hints["has_package_json"] = any(p.name == "package.json" for p in _iter_paths(root))
+        hints["has_pom_xml"] = any(p.name == "pom.xml" for p in _iter_paths(root))
+        hints["has_build_gradle"] = any(p.name.lower() == "build.gradle" for p in _iter_paths(root))
+        hints["has_tests_dir"] = (root / "tests").exists() or any("/tests/" in str(p) for p in _iter_paths(root))
+        hints["top_dirs"] = sorted({(Path(f).parts[0] if "/" in f else ".") for f in _list_files(root)[:200]})
+        hints["requirements_head"] = _read_small_text_if_exists(root, ["requirements.txt"])[:800]
+        hints["package_json_head"] = _read_small_text_if_exists(root, ["package.json"])[:800]
+        hints["pom_head"] = _read_small_text_if_exists(root, ["pom.xml"])[:800]
     except Exception:
-        return ""
+        pass
+    return hints
 
-def _rm(container):
-    try: container.remove(force=True)
-    except Exception: pass
-
-# ---- local (unsafe) ----
-def _local_single(path:Path, lang:Optional[str], timeout:int)->Tuple[bool,bool,str]:
-    cp = subprocess.run(_cmd_single(str(path),lang), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
-    return True, (cp.returncode==0), cp.stdout
-
-def _local_project(workdir:Path, lang:str, timeout:int)->Tuple[bool,bool,str]:
-    cp = subprocess.run(_cmd_project(lang), cwd=workdir, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout)
-    return True, (cp.returncode==0), cp.stdout
-
-# ------------------ TEXT / SNAPSHOT ------------------
-def _read_django_file_text(dj_file, logs:List[str])->str:
-    name = Path(dj_file.name).name.lower()
-    mt = mimetypes.guess_type(name)[0] or ""
-    tmp = _temp_in_shared(f"spec_{name}")
-    try:
-        f = dj_file.open("rb")
-        with open(tmp,"wb") as out: shutil.copyfileobj(f,out)
-        f.close()
-    except Exception as e:
-        logs.append(f"[warn] attach download failed: {e}"); return ""
-    try:
-        if name.endswith(".pdf") or "pdf" in mt: return _extract_pdf(tmp, logs)
-        if name.endswith(".docx") or "word" in mt: return _extract_docx(tmp, logs)
-        if name.endswith(".txt") or name.endswith(".md") or mt.startswith("text/"): return _safe_read(tmp, logs)
-    finally:
-        try: tmp.unlink(missing_ok=True)
-        except Exception: pass
+def _read_small_text_if_exists(root: Path, names: List[str]) -> str:
+    for n in names:
+        p = root / n
+        if p.exists() and p.is_file() and p.stat().st_size < 200_000:
+            try:
+                with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                    return f.read(200_000)
+            except Exception:
+                pass
     return ""
 
-def _extract_pdf(p:Path|str, logs)->str:
-    if not pdfminer_high: logs.append("[info] pdfminer not installed"); return ""
-    try: return pdfminer_high.extract_text(str(p)) or ""
-    except Exception as e: logs.append(f"[warn] pdf parse failed: {e}"); return ""
+def _compose_grade_context(tree_summary: str, logs_text: str) -> str:
+    return f"FILE TREE (truncated):\n{tree_summary}\n\nRUNTIME/BUILD LOGS (truncated):\n{logs_text[-12000:]}"
 
-def _extract_docx(p:Path|str, logs)->str:
-    if not docx: logs.append("[info] python-docx not installed"); return ""
+# -----------------------
+# Text extraction / snapshots
+# -----------------------
+def _extract_text_from_arbitrary_file(django_file, logs: List[str]) -> str:
+    name = Path(django_file.name).name.lower()
+    mt = mimetypes.guess_type(name)[0] or ""
+    tmp_path = _mktempdir(prefix="spec_") / name
     try:
-        d = docx.Document(str(p))
-        return "\n".join(par.text for par in d.paragraphs)
-    except Exception as e: logs.append(f"[warn] docx parse failed: {e}"); return ""
+        with django_file.open("rb") as f, open(tmp_path, "wb") as out:
+            shutil.copyfileobj(f, out)
+    except Exception as e:
+        logs.append(f"[warn] Could not save attachment: {e}")
+        return ""
+    try:
+        if name.endswith(".pdf") or "pdf" in mt:
+            return _extract_text_from_pdf(tmp_path, logs)
+        if name.endswith(".docx") or "word" in mt:
+            return _extract_text_from_docx(tmp_path, logs)
+        if name.endswith(".txt") or name.endswith(".md") or mt.startswith("text/"):
+            return _safe_read_text(tmp_path, logs)
+    finally:
+        try:
+            shutil.rmtree(tmp_path.parent, ignore_errors=True)
+        except Exception:
+            pass
+    return ""
 
-def _extract_img(p:Path|str, logs)->str:
-    if not PIL: logs.append("[info] Pillow not installed"); return ""
+def _extract_text_from_pdf(path: Path | str, logs: List[str]) -> str:
+    if not pdfminer_high:
+        logs.append("[info] pdfminer not installed; cannot parse PDF.")
+        return ""
+    try:
+        return pdfminer_high.extract_text(str(path)) or ""
+    except Exception as e:
+        logs.append(f"[warn] PDF parse failed: {e}")
+        return ""
+
+def _extract_text_from_docx(path: Path | str, logs: List[str]) -> str:
+    if not docx:
+        logs.append("[info] python-docx not installed; cannot parse DOCX.")
+        return ""
+    try:
+        d = docx.Document(str(path))
+        return "\n".join(p.text for p in d.paragraphs)
+    except Exception as e:
+        logs.append(f"[warn] DOCX parse failed: {e}")
+        return ""
+
+def _safe_read_text(path: Path | str, logs: List[str], limit: int = 200_000) -> str:
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read(limit)
+    except Exception as e:
+        logs.append(f"[warn] Text read failed: {e}")
+        return ""
+
+def _extract_text_from_image(path: Path | str, logs: List[str]) -> str:
+    if PIL is None:
+        logs.append("[info] Pillow not installed; cannot read image.")
+        return ""
     try:
         from PIL import Image
-        im = Image.open(str(p))
-        meta = f"(image {im.size} {im.mode})"
+        img = Image.open(str(path))
+        meta = f"(Image size: {img.size}, mode: {img.mode})"
         if pytesseract:
-            try: return meta+"\n\n"+pytesseract.image_to_string(im)
-            except Exception as e: logs.append(f"[warn] OCR failed: {e}"); return meta
+            try:
+                txt = pytesseract.image_to_string(img)
+                return f"{meta}\n\n{txt}"
+            except Exception as e:
+                logs.append(f"[warn] OCR failed: {e}")
+                return meta
         return meta
-    except Exception as e: logs.append(f"[warn] image open failed: {e}"); return ""
+    except Exception as e:
+        logs.append(f"[warn] Image open failed: {e}")
+        return ""
 
-def _safe_read(p:Path|str, logs, limit=200_000)->str:
+def _best_effort_binary_peek(path: Path | str, logs: List[str], limit: int = 4096) -> str:
     try:
-        with open(p,"r",encoding="utf-8",errors="ignore") as f: return f.read(limit)
-    except Exception as e: logs.append(f"[warn] text read failed: {e}"); return ""
+        with open(path, "rb") as f:
+            data = f.read(limit)
+        return f"(Binary file; first 64 bytes hex): {data[:64].hex()}"
+    except Exception as e:
+        logs.append(f"[warn] Binary peek failed: {e}")
+        return ""
 
-def _peek_bin(p:Path|str, logs, limit=64)->str:
-    try:
-        with open(p,"rb") as f: b=f.read(limit)
-        return f"(binary peek, {limit} bytes hex) {b.hex()}"
-    except Exception as e: logs.append(f"[warn] binary peek failed: {e}"); return ""
-
-def _snapshot_text(root:Path, logs, limit_bytes=200_000)->str:
-    total=0; out=[]
-    for p in root.rglob("*"):
-        if not p.is_file(): continue
-        if p.suffix.lower() in (".png",".jpg",".jpeg",".gif",".bmp",".webp",".tiff",".pdf"): continue
+def _gather_text_snapshot(root: Path, logs: List[str], limit_bytes: int = 200_000) -> str:
+    chunks: List[str] = []
+    total = 0
+    for p in _iter_paths(root):
+        if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tiff", ".pdf"):
+            continue
         try:
-            if p.stat().st_size>60_000: continue
-            txt = _safe_read(p, logs, 60_000)
+            size = p.stat().st_size
+            if size > 50_000:
+                continue
+            txt = _safe_read_text(p, logs, limit=50_000)
             if txt:
-                rel = str(p.relative_to(root))
-                out.append(f"\n--- {rel} ---\n{txt}\n")
+                chunks.append(f"\n--- {p} ---\n{txt}\n")
                 total += len(txt)
-                if total>limit_bytes: break
-        except Exception: pass
-    return "".join(out)
+                if total > limit_bytes:
+                    break
+        except Exception:
+            pass
+    return "".join(chunks)
 
-def _nb_text(nb)->str:
-    lines=[]
+def _notebook_text(nb) -> str:
+    out_lines = []
     for cell in nb.cells:
-        if getattr(cell,"cell_type","")=="code":
-            for o in cell.get("outputs",[]):
-                if "text" in o: lines.append(o["text"])
-                if "data" in o and "text/plain" in o["data"]: lines.append(o["data"]["text/plain"])
-    return "\n".join(lines)[:200_000]
+        if getattr(cell, "cell_type", "") == "code":
+            for out in cell.get("outputs", []):
+                if "text" in out:
+                    out_lines.append(out["text"])
+                if "data" in out and "text/plain" in out["data"]:
+                    out_lines.append(out["data"]["text/plain"])
+    return "\n".join(out_lines)[:200000]
 
-def _detect_langs(root:Path)->List[Dict[str,Any]]:
-    score={}
-    for p in root.rglob("*"):
-        if not p.is_file(): continue
-        ext=p.suffix.lower(); lang=_ext2lang(ext)
-        if lang: score[lang]=score.get(lang,0)+1
-        if p.name.lower() in ("pom.xml","build.gradle","package.json","requirements.txt","pyproject.toml","makefile","cmakelists.txt"):
-            score[p.name.lower()]=score.get(p.name.lower(),0)+5
-    return [{"language":k,"score":v} for k,v in sorted(score.items(), key=lambda x:x[1], reverse=True)]
+# -----------------------
+# LLM grading
+# -----------------------
+LENIENT_SYSTEM = """You are a fair, assignment-agnostic grader.
+Be lenient on minor issues; focus on core correctness and plausible effort.
+Return clear, constructive feedback."""
 
-def _ext2lang(ext:str)->Optional[str]:
-    return {".py":"python",".ipynb":"python",".sh":"bash",".js":"node",".ts":"node",".java":"java",".c":"c",".cc":"cpp",".cpp":"cpp",".go":"go",".rs":"rust",".rb":"ruby",".php":"php",".cs":"dotnet"}.get(ext)
+def _llm_grade_textual(student_text: str, spec_text: str, spec_attach: str, context: Dict[str, Any],
+                       logs: List[str], report: Dict[str, Any]) -> Dict[str, Any]:
+    length = len(student_text or "")
+    detected_work = length > 0 or bool(spec_attach)
+    report["detected_work"] = report.get("detected_work", False) or detected_work
 
-# ------------------ LLM ------------------
-SYS = ("You are a fair, careful grader. Use only provided evidence (logs, code snapshot, text). "
-       "If evidence is insufficient to assign a confident numeric grade, set needs_manual=true and still provide a helpful summary and findings. "
-       "Keep feedback concise and actionable.")
-
-def _llm_grade_textual(student_text:str, spec_text:str, spec_attach:str, context:Dict[str,Any], logs:List[str], report:Dict[str,Any])->Dict[str,Any]:
-    report["detected_work"]=report.get("detected_work",False) or bool(student_text.strip())
-    if _openai and USE_LLM:
+    if USE_LLM and _openai_client:
         try:
-            prompt=f"""
-Context: {json.dumps(context)}
-Assignment (free-form):
+            prompt = f"""
+Context: {json.dumps(context, ensure_ascii=False)}
+Assignment description:
 <<<
-{spec_text[:6000]}
+{spec_text}
 >>>
 
-Attachment (if any):
+Attachment (first 4000 chars):
 <<<
 {spec_attach[:4000]}
 >>>
 
-Evidence (logs/text/code snapshot):
+Submission artifacts (logs/text snapshot; truncated):
 <<<
 {(student_text or '')[:12000]}
 >>>
 
-Return STRICT JSON:
-{{
-  "summary": "2-5 sentences of what exists and what it does",
-  "findings": ["bullet points of issues/strengths"],
-  "grade_pct": 0-100 float,
-  "confidence": 0-1 float,
-  "needs_manual": true|false
-}}
+Tasks:
+1) Briefly summarize what was attempted and whether it meets core requirements.
+2) Give 3–6 specific, constructive suggestions (be kind).
+3) Output a LENIENT numeric grade 0–100 (float). Penalize only major issues (no runnable code, severe errors, or no substance).
+Return strict JSON: {{"summary": "str", "suggestions": ["str", "..."], "grade_pct": 85.0}}
 """
-            r=_openai.chat.completions.create(model=os.getenv("OPENAI_MODEL","gpt-5-mini"),
-                                              messages=[{"role":"system","content":SYS},{"role":"user","content":prompt}])
-            txt=r.choices[0].message.content or "{}"
-            data=_json_from(txt)
-            grade=float(data.get("grade_pct",60.0))
-            fb=data.get("summary","").strip()
-            finds=data.get("findings",[])
-            if finds: fb=(fb+"\n\nNotes:\n- "+"\n- ".join(finds)).strip()
-            report["llm_used"]=True
-            report["llm_confidence"]=data.get("confidence",0.5)
-            report["llm_needs_manual"]=bool(data.get("needs_manual",False))
-            return _final("done", _clamp(grade), fb, report, _pack(logs), time.time())
+            # NOTE: The example above uses JSON braces but is a plain string; it's safe. We avoid printing this into templates directly.
+            text = _chat(prompt, LENIENT_SYSTEM)
+            data = _extract_json(text)
+            grade = float(data.get("grade_pct", 70.0))
+            suggestions = data.get("suggestions", [])
+            if isinstance(suggestions, list):
+                sugg_text = "\n- ".join(str(s) for s in suggestions)
+            else:
+                sugg_text = str(suggestions)
+            feedback = f"{data.get('summary','')}\n\nSuggestions:\n- {sugg_text}" if sugg_text else str(data.get("summary",""))
+            return _final("done" if detected_work else "partial", _clamp(grade), feedback, report, "\n".join(logs), time.time())
         except Exception as e:
-            logs.append(f"[warn] LLM failed: {e}")
-            report["llm_used"]=False
-            report["llm_error"]=str(e)
+            report["llm_used"] = False
+            report["llm_error"] = str(e)
+            logs.append(f"[warn] LLM grade failed: {e}")
+
     # Heuristic fallback
-    base=10.0 if not student_text.strip() else 55.0
-    if len(student_text)>2000: base=max(base,65.0)
-    fb=("Heuristic review (LLM unavailable). We analyzed files/logs; this is a preliminary score; instructor may adjust.")
-    return _final("partial" if student_text.strip() else "failed", _clamp(base), fb, report, _pack(logs), time.time())
+    if not detected_work:
+        return _final("failed", 5.0, "No meaningful content detected in submission.", report, "\n".join(logs), time.time())
+    base = 70.0
+    if length > 2000:
+        base += 10
+    feedback = ("Automated review (no LLM):\n"
+                "- We detected content and attempted to match it to the assignment.\n"
+                "- This is an estimate; final grade may be adjusted by your professor.")
+    return _final("partial", _clamp(base), feedback, report, "\n".join(logs), time.time())
 
-# ------------------ misc ------------------
-def _json_from(s:str)->Dict[str,Any]:
-    m=re.search(r"\{.*\}", s, flags=re.S)
-    if not m: return {}
-    try: return json.loads(m.group(0))
-    except Exception: return {}
+def _extract_json(text: str) -> Dict[str, Any]:
+    m = re.search(r"\{.*\}", text, flags=re.S)
+    if not m:
+        return {}
+    try:
+        return json.loads(m.group(0))
+    except Exception:
+        return {}
 
-def _ensure_shared_root(logs:List[str])->Path:
-    for cand in (os.getenv("GRADER_SHARED_DIR"), "/grader-shared", "/tmp/autograder"):
-        if not cand: continue
-        d=Path(cand)
-        try:
-            d.mkdir(parents=True, exist_ok=True)
-            if os.access(d, os.W_OK): return d
-        except Exception as e: logs.append(f"[warn] cannot use {d}: {e}")
-    return Path(tempfile.gettempdir())
+def _clamp(x: float, a: float = 0.0, b: float = 100.0) -> float:
+    return max(a, min(b, x))
 
-def _temp_in_shared(name:str)->Path:
-    base=_ensure_shared_root([])
-    p=base/f"_tmp_{int(time.time()*1000)}_{name}"
-    p.parent.mkdir(parents=True, exist_ok=True)
-    return p
+# -----------------------
+# Fallback planner (generic, not assignment-specific)
+# -----------------------
+def _fallback_plan(projdir: Path) -> Dict[str, Any]:
+    files = set(_list_files(projdir))
 
-def _pack(chunks:List[str])->str:
-    return ("\n".join(chunks))[-MAX_LOG:]
+    def has(name: str) -> bool:
+        return any(Path(f).name.lower() == name for f in files)
 
-def _clamp(x:float,a:float=0.0,b:float=100.0)->float:
-    return max(a,min(b,x))
+    def has_any(names: List[str]) -> bool:
+        return any(has(n) for n in names)
 
-def shq(s:str)->str:
-    return "'" + s.replace("'","'\"'\"'") + "'"
+    services: List[Dict[str, Any]] = []
 
-def _final(status:str, grade:float, feedback:str, report:Dict[str,Any], logs:str, start:float)->Dict[str,Any]:
+    # Python/Django generic
+    if has("manage.py") or has("requirements.txt") or has("pyproject.toml"):
+        services.append({
+            "name": "python-checks",
+            "image": DEFAULT_IMAGE,
+            "workdir": ".",
+            "setup": [
+                "python -m pip install -U pip wheel setuptools || true",
+                "[ -f requirements.txt ] && pip install -r requirements.txt || true",
+                "[ -f pyproject.toml ] && pip install . || true"
+            ],
+            "run": [
+                "[ -f manage.py ] && python manage.py check || true",
+                "pytest -q || true",
+                "python -m unittest -q || true",
+                "echo 'done'"
+            ],
+            "network": False,
+            "timeout": 180
+        })
+    # Node generic
+    elif has("package.json"):
+        img = "node:20" if "node:20" in ALLOWED_IMAGES else DEFAULT_IMAGE
+        services.append({
+            "name": "node-checks",
+            "image": img,
+            "workdir": ".",
+            "setup": ["npm ci --silent || npm i --silent || true"],
+            "run":   ["npm test --silent || npm run build --silent || true", "echo 'done'"],
+            "network": False,
+            "timeout": 180
+        })
+    # Maven/Gradle generic
+    elif has("pom.xml") or has("build.gradle"):
+        img = next((i for i in ALLOWED_IMAGES if i.startswith("maven:")), DEFAULT_IMAGE)
+        # Prefer tests if present
+        run_cmds = [
+            "mvn -B -q -DskipTests=false test || mvn -B -q -DskipTests package || true"
+        ]
+        services.append({
+            "name": "java-tests",
+            "image": img,
+            "workdir": ".",
+            "run": run_cmds,
+            "network": False,
+            "timeout": 180
+        })
+    else:
+        services.append({
+            "name": "static-snapshot",
+            "image": DEFAULT_IMAGE,
+            "workdir": ".",
+            "run": ["echo 'no build system detected'"],
+            "network": False,
+            "timeout": 60
+        })
+
+    return {"services": services}
+
+# -----------------------
+# Misc utils
+# -----------------------
+def _is_archive(name: str) -> bool:
+    name = name.lower()
+    return name.endswith(".zip") or name.endswith(".tar.gz") or name.endswith(".tgz") or name.endswith(".tar")
+
+def _looks_like_code(name: str) -> bool:
+    exts = (".py", ".sh", ".js", ".ts", ".java", ".c", ".cc", ".cpp", ".go", ".rs", ".rb", ".php", ".cs")
+    return name.lower().endswith(exts)
+
+def _looks_like_image(name: str, mt: str) -> bool:
+    return any(name.lower().endswith(e) for e in (".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".svg")) or (mt and mt.startswith("image/"))
+
+def _mktempdir(prefix: str = "autograde_") -> Path:
+    base = Path(os.getenv("GRADER_SHARED_DIR", "/grader-shared"))
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+        if os.access(base, os.W_OK):
+            return Path(tempfile.mkdtemp(prefix=prefix, dir=str(base)))
+    except Exception:
+        pass
+    return Path(tempfile.mkdtemp(prefix=prefix))
+
+def _final(status: str, grade: float, feedback: str, report: Dict[str, Any], logs_joined: str, start: float) -> Dict[str, Any]:
+    logs_text = (logs_joined or "")[-200000:]
+    report.setdefault("sandbox_full_log", logs_text)
     return {
         "status": status,
         "grade_pct": _clamp(grade),
-        "feedback": feedback.strip(),
+        "feedback": (feedback or "").strip(),
         "report": report,
-        "logs": logs,
+        "logs": logs_text,
         "finished_at": timezone.now().isoformat(),
-        "elapsed_s": max(0.0, time.time()-start),
+        "elapsed_s": max(0.0, time.time() - start),
     }

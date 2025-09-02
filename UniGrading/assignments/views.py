@@ -662,7 +662,8 @@ def update_submission_grade(request, pk: int):
     # Only the owning professor may edit
     if request.user != sub.assignment.professor and not request.user.is_superuser:
         messages.error(request, "You don't have permission to edit this grade.")
-        return redirect("assignments:submission_detail", pk=sub.pk)
+        return redirect("assignments:assignment_submission_detail", pk=sub.pk)
+
 
     if request.method == "POST":
         grade_raw = (request.POST.get("grade_pct") or "").strip()
@@ -673,19 +674,23 @@ def update_submission_grade(request, pk: int):
             sub.grade_pct = float(grade_raw) if grade_raw != "" else None
         except ValueError:
             messages.error(request, "Grade must be a number between 0 and 100.")
-            return redirect("assignments:submission_detail", pk=sub.pk)
+            return redirect("assignments:assignment_submission_detail", pk=sub.pk)
+
 
         if sub.grade_pct is not None and not (0 <= sub.grade_pct <= 100):
             messages.error(request, "Grade must be between 0 and 100.")
-            return redirect("assignments:submission_detail", pk=sub.pk)
+            return redirect("assignments:assignment_submission_detail", pk=sub.pk)
+
 
         sub.ai_feedback = feedback
         sub.save(update_fields=["grade_pct", "ai_feedback"])
         messages.success(request, "Grade & comment updated.")
-        return redirect("assignments:submission_detail", pk=sub.pk)
+        return redirect("assignments:assignment_submission_detail", pk=sub.pk)
+
 
     # If someone GETs this URL, just go back to detail
-    return redirect("assignments:submission_detail", pk=sub.pk)
+    return redirect("assignments:assignment_submission_detail", pk=sub.pk)
+
 
 
 @xframe_options_exempt

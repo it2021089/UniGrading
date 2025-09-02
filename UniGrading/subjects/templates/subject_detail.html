@@ -50,6 +50,9 @@
             <button class="btn btn-sm btn-outline-light d-none" id="cancel-subject-name" onclick="cancelSubjectNameEdit()">
               <i class="fas fa-times"></i>
             </button>
+            <a href="{% url 'subjects:manage_enrollments' subject.id %}" class="btn btn-sm btn-warning">
+              <i class="fas fa-users"></i> Enrollments
+            </a>
           </div>
           {% endif %}
         </div>
