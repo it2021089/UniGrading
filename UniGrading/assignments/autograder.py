@@ -190,10 +190,10 @@ def grade_submission(assignment, submission) -> Dict[str, Any]:
     except Exception:
         pass
 
-    # Leniency floor if work detected
-    if result["status"] in ("done", "partial") and result.get("grade_pct", 0) < 40 and report.get("detected_work", False):
-        result["logs"] += "\n[policy] Leniency floor applied because work was detected."
-        result["grade_pct"] = max(result.get("grade_pct", 0), 40.0)
+    # # Leniency floor if work detected
+    # if result["status"] in ("done", "partial") and result.get("grade_pct", 0) < 40 and report.get("detected_work", False):
+    #     result["logs"] += "\n[policy] Leniency floor applied because work was detected."
+    #     result["grade_pct"] = max(result.get("grade_pct", 0), 40.0)
 
     return result
 
