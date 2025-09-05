@@ -1,0 +1,25 @@
+@startuml Autograder – Sequence
+actor Student
+participant "Django Web" as Web
+participant "Redis (broker)" as R
+participant "Celery Worker\n(concurrency=1)" as W
+participant "Docker-in-Docker" as D
+participant "MinIO (S3)" as S3
+database "DB" as DB
+participant "OpenAI API" as LLM
+
+
+Student -> Web : Submit assignment
+Web -> S3 : store file
+Web -> DB : create AssignmentSubmission(queued)
+... due reached (Celery Beat) ...
+Web -> R : enqueue run_autograde_for_assignment
+R -> W : task
+W -> S3 : read submission file
+W -> D : run sandbox container(s)
+D --> W : logs + exit codes
+W -> LLM : optional feedback/grade
+W -> S3 : write artefacts/logs
+W -> DB : update grade_pct, status, report
+Student -> Web : view grade & feedback
+@enduml

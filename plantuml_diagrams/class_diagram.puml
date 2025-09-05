@@ -1,0 +1,118 @@
+@startuml Class Diagram
+skinparam classAttributeIconSize 0
+hide methods
+
+class Institution {
+  +institution_id: AutoField
+  +name: Char(100) [unique]
+}
+
+class CustomUser {
+  +id: AutoField
+  +username: str
+  +email: str
+  +first_name: str
+  +last_name: str
+  +role: {'student'|'professor'}
+  +is_staff: bool
+  +is_superuser: bool
+}
+
+CustomUser "0..*" --> "0..1" Institution : institution
+
+class Subject {
+  +id
+  +name: Char(100)
+  +description: Text
+}
+Subject "0..*" *-- "1" CustomUser : professor
+
+class Category {
+  +id
+  +name: Char
+}
+Category "0..*" *-- "1" Subject
+Category "0..*" *-- "0..1" Category : parent
+
+class File {
+  +id
+  +name: Char(100)
+  +file: FileField
+  +uploaded_at: DateTime
+}
+File "0..*" *-- "1" Category
+File "0..*" --> "0..1" CustomUser : uploaded_by
+
+class Enrollment {
+  +id
+  +created_at: DateTime
+}
+Enrollment "0..*" --> "1" CustomUser : user
+Enrollment "0..*" --> "1" Subject
+
+class Assignment {
+  +id
+  +title: Char(255)
+  +description: Text
+  +due_date: DateTime
+  +file: FileField?
+  +autograde_enabled: bool
+  +autograde_job_scheduled: bool
+  +autograde_done_at: DateTime?
+}
+Assignment "0..*" --> "1" Subject
+Assignment "0..*" --> "1" CustomUser : professor
+
+class AssignmentSubmission {
+  +id
+  +file: FileField
+  +submitted_at: DateTime
+  +grade_pct: float?
+  +autograde_status: enum
+  +ai_feedback: Text
+  +runner_logs: Text
+}
+AssignmentSubmission "0..*" --> "1" Assignment
+AssignmentSubmission "0..*" --> "1" CustomUser : student
+
+class Test {
+  +id
+  +name: Char
+  +duration_minutes: int
+  +created_at: DateTime
+}
+Test "0..*" --> "1" Subject
+Test "0..*" --> "1" CustomUser : professor
+
+class Question {
+  +id
+  +text: Text
+}
+Question "0..*" --> "1" Test
+
+class Choice {
+  +id
+  +text: Char
+  +is_correct: bool
+}
+Choice "0..*" --> "1" Question
+
+class TestAttempt {
+  +id
+  +started_at: DateTime
+  +submitted_at: DateTime
+  +score: int
+  +max_score: int
+  +duration_seconds: int
+}
+TestAttempt "0..*" --> "1" Test
+TestAttempt "0..*" --> "1" CustomUser : student
+
+class AttemptAnswer {
+  +id
+  +is_correct: bool
+}
+AttemptAnswer "0..*" --> "1" TestAttempt
+AttemptAnswer "0..*" --> "1" Question
+AttemptAnswer "0..*" --> "1" Choice
+@enduml

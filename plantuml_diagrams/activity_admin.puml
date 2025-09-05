@@ -1,0 +1,12 @@
+@startuml activity admin
+start
+partition "Admin" {
+  :Login;
+  :Create/Manage Institutions;
+  :Manage users\nand assign roles;
+}
+partition "Web App" {
+  :Apply RBAC and policies\nper Institution;
+}
+stop
+@enduml

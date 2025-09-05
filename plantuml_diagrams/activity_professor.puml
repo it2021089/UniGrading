@@ -1,0 +1,30 @@
+@startuml Activity Professor
+start
+partition "Professor" {
+  :Create subject;
+  :Create folders/ Upload files;
+  :Create assignment\n(set due, rules, file?);
+  :Optionally create MCQ test;
+}
+partition "Web App" {
+  :Persist models;
+}
+partition "Celery Beat" {
+  :Detect due assignments every minute;
+  :Schedule run_autograde_for_assignment;
+}
+partition "Celery Worker" {
+  :Sequentially grade all submissions;
+  :Mark done/failed/await_manual;
+}
+partition "Professor" {
+  :Open analytics & submissions;
+  if (await_manual or adjust?) then (yes)
+    :Review logs/report;
+    :Override grade or Re-run;
+  else (no)
+    :Publish final grades;
+  endif
+}
+stop
+@enduml

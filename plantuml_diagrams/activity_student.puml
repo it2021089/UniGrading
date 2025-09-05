@@ -1,0 +1,37 @@
+@startuml Activity Student
+skinparam activityArrowThickness 1
+start
+partition "Student" {
+  :Login;
+  :Browse subjects;
+  :Enroll to subject;
+  :Browse folders (Courses,Others) / files;
+  :View Tests;
+  :Take MCQ test\n(auto-graded, instant);
+  :View and open assignment;
+  :Upload file(s) and Submit;
+}
+partition "Web App" {
+  :Create AssignmentSubmission\n(status=queued);
+  :Store file to MinIO;
+  :Publish Celery task to Redis;
+}
+partition "Celery Worker" {
+  note right
+  Single worker, single thread
+  FIFO execution
+  end note
+  :Dequeue submission;
+  :Run autograder in Docker;
+  :Update grade_pct, status,\nlogs, ai_feedback;
+}
+partition "Student" {
+  :Refresh/View submission;
+  if (status == await_manual?) then (yes)
+    :Wait for manual review;
+  else (no)
+    :View grade and feedback;
+  endif
+}
+stop
+@enduml

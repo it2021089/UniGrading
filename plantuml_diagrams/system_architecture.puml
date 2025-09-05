@@ -1,0 +1,47 @@
+@startuml System Architecture
+skinparam shadowing false
+skinparam rectangleStyle rounded
+
+actor "Client Browser" as User
+
+node "Docker Host" {
+  node "unigrading\nDjango app\nport 8000" as App
+  node "worker\nCelery\n--concurrency=1" as Wrk
+  node "beat\nCelery Beat" as Beat
+  node "flower\nmonitor\nport 5555" as Flw
+  node "redis:6379" as Redis
+  node "minio\n9000/9001" as Minio
+  node "docker:27-dind\nTCP 2375\nprivileged" as DinD
+
+  database "SQLite file\n/db.sqlite3 (dev)" as DB
+
+  folder "Volumes" {
+    frame "minio-data"
+    frame "dind-storage"
+    frame "grader-shared"
+  }
+}
+
+User --> App : HTTP 8000
+User --> Flw : HTTP 5555
+
+App --> DB : ORM
+App --> Minio : S3
+App --> Redis : enqueue
+
+Beat --> Redis : schedule ticks
+Wrk --> Redis : dequeue
+Wrk --> DinD : sandbox runs
+Wrk --> Minio : store logs/files
+Wrk --> DB : write grades
+
+note right of Wrk
+Single worker
+single thread
+FIFO grading
+end note
+
+cloud "OpenAI API" as OpenAI
+Wrk --> OpenAI : optional LLM
+
+@enduml

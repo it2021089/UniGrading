@@ -1,0 +1,50 @@
+@startuml Use Case Diagram
+left to right direction
+actor Student
+actor Professor
+actor Admin
+
+rectangle UniGrading {
+  usecase "Browse Subjects\n& Enroll" as UC1
+  usecase "View Folders/Files" as UC2
+  usecase "Take MCQ Test\n(instant grade)" as UC3
+  usecase "Submit Assignment" as UC4
+  usecase "View Grade\n& AI Feedback" as UC5
+  usecase "Manage Profile" as UC6
+
+  usecase "Create Subject" as UC7
+  usecase "Manage Folders/Files" as UC8
+  usecase "Create MCQ Test" as UC9
+  usecase "Create Assignment\n(set due, criteria)" as UC10
+  usecase "Manage Enrollments" as UC11
+  usecase "View Submissions\n& Analytics" as UC12
+  usecase "Override Grade /\nRe-run Autograde" as UC13
+
+  usecase "Manage Users" as UC14
+  usecase "Create/Manage\nInstitutions" as UC15
+
+  usecase "Autograde Pipeline\n(Docker/Celery/LLM)" as UC16
+}
+
+Student --> UC1
+Student --> UC2
+Student --> UC3
+Student --> UC4
+Student --> UC5
+Student --> UC6
+
+Professor --> UC7
+Professor --> UC8
+Professor --> UC9
+Professor --> UC10
+Professor --> UC11
+Professor --> UC12
+Professor --> UC13
+Professor --> UC6
+
+Admin --> UC14
+Admin --> UC15
+
+UC4 ..> UC16 : <<include>>
+UC10 ..> UC16 : <<triggers at due>>
+@enduml
