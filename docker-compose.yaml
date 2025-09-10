@@ -106,7 +106,7 @@ services:
       AUTOGRADER_ENABLE_DOCKER: "1"
       AUTOGRADER_DISABLE_DOCKER: "0"
       AUTOGRADER_ENABLE_LOCAL_EXEC: "0"
-      AUTOGRADER_ALLOW_NET_SETUP: "1"        # allow one-time networked setup containers
+      AUTOGRADER_ALLOW_NET_SETUP: "1"       
       AUTOGRADER_TIMEOUT_SEC: "180"
       AUTOGRADER_MAX_LOG_BYTES: "200000"
       GRADER_SHARED_DIR: /grader-shared

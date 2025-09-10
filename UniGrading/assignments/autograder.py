@@ -449,7 +449,7 @@ def _sanitize_plan(plan: Dict[str, Any]) -> Dict[str, Any]:
         env = svc.get("env") or {}
         if not isinstance(env, dict):
             env = {}
-        network = bool(svc.get("network", False))
+        network = bool(svc.get("network", True))
         timeout = int(svc.get("timeout") or 180)
         timeout = max(30, min(timeout, 240))
 
@@ -1064,7 +1064,7 @@ def _fallback_plan(projdir: Path) -> Dict[str, Any]:
                 "python -m unittest -q || true",
                 "echo 'done'"
             ],
-            "network": False,
+            "network": True,
             "timeout": 180
         })
     # Node generic
@@ -1076,7 +1076,7 @@ def _fallback_plan(projdir: Path) -> Dict[str, Any]:
             "workdir": ".",
             "setup": ["npm ci --silent || npm i --silent || true"],
             "run":   ["npm test --silent || npm run build --silent || true", "echo 'done'"],
-            "network": False,
+            "network": True,
             "timeout": 180
         })
     # Maven/Gradle generic
@@ -1091,7 +1091,7 @@ def _fallback_plan(projdir: Path) -> Dict[str, Any]:
             "image": img,
             "workdir": ".",
             "run": run_cmds,
-            "network": False,
+            "network": True,
             "timeout": 180
         })
     else:
@@ -1100,7 +1100,7 @@ def _fallback_plan(projdir: Path) -> Dict[str, Any]:
             "image": DEFAULT_IMAGE,
             "workdir": ".",
             "run": ["echo 'no build system detected'"],
-            "network": False,
+            "network": True,
             "timeout": 60
         })
 
