@@ -1,10 +1,12 @@
 # assignments/views.py
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+from zoneinfo import ZoneInfo  # needed by _normalize_due_with_client_tz
 import logging
 import mimetypes
-from zoneinfo import ZoneInfo
+import statistics, re
 from collections import Counter
 import statistics, re
+from django.utils.text import get_valid_filename
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin
@@ -51,8 +53,7 @@ def _is_enrolled(user, subject: Subject) -> bool:
 
 
 # -----------------------
-# Due date helper: respect client (browser) timezone if provided.
-# Add a hidden input named "client_tz" (e.g., "America/New_York") in your form template.
+# Due date helper
 # -----------------------
 def _normalize_due_with_client_tz(request, naive_dt):
     if not naive_dt:
@@ -66,7 +67,6 @@ def _normalize_due_with_client_tz(request, naive_dt):
             return aware.astimezone(timezone.utc)
         except Exception:
             pass
-    # fallback: server TIME_ZONE -> UTC
     return timezone.make_aware(naive_dt).astimezone(timezone.utc)
 
 
@@ -82,7 +82,6 @@ class AssignmentListView(LoginRequiredMixin, BreadcrumbMixin, ListView):
     def get_queryset(self):
         self.subject = get_object_or_404(Subject, pk=self.kwargs["subject_id"])
 
-        # Only subject owner or enrolled users can see the list
         if not (_is_owner_prof(self.request.user, self.subject) or _is_enrolled(self.request.user, self.subject)):
             return Assignment.objects.none()
 
@@ -107,7 +106,6 @@ class AssignmentListView(LoginRequiredMixin, BreadcrumbMixin, ListView):
         ctx["can_manage"] = _is_owner_prof(user, self.subject)
         ctx["breadcrumbs"] = self.get_breadcrumbs()
 
-        # student convenience flags
         if getattr(user, "role", None) != "professor":
             now = timezone.now()
             for a in ctx["assignments"]:
@@ -127,7 +125,7 @@ class AssignmentListView(LoginRequiredMixin, BreadcrumbMixin, ListView):
                     if s:
                         a.my_submission_id = s.id
                         a.my_grade_pct = getattr(s, "grade_pct", None)
-                        a.can_submit = a.due_date > now  # can still re-submit before deadline
+                        a.can_submit = a.due_date > now
 
         return ctx
 
@@ -162,10 +160,8 @@ class AssignmentCreateView(LoginRequiredMixin, BreadcrumbMixin, CreateView):
     def form_valid(self, form):
         form.instance.professor = self.request.user
         form.instance.subject = self.subject
-        # normalize due_date using client's tz if supplied
         form.instance.due_date = _normalize_due_with_client_tz(self.request, form.cleaned_data.get("due_date"))
         resp = super().form_valid(form)
-        # nothing is enqueued now; Celery Beat will pick it up when due_date <= now
         return resp
 
     def get_success_url(self):
@@ -202,7 +198,6 @@ class AssignmentDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             ctx["preview_url"] = reverse("assignments:preview_assignment_file", kwargs={"pk": a.pk})
             ctx["download_url"] = reverse("assignments:download_assignment_file", kwargs={"pk": a.pk})
 
-        # Submission info (students & non-owner profs)
         is_owner = ctx["can_manage"]
         if (getattr(u, "role", None) != "professor") or (getattr(u, "role", None) == "professor" and not is_owner):
             ctx["my_submission_id"] = None
@@ -281,7 +276,6 @@ class AssignmentAnalyticsView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             "pass_rate": round(100.0 * sum(v >= 50 for v in vals) / len(vals), 1) if vals else None,
         }
 
-        # 0–100 histogram in 10-pt bins
         hist_bins = [0] * 10
         for v in vals:
             hist_bins[min(9, int(v) // 10)] += 1
@@ -293,6 +287,7 @@ class AssignmentAnalyticsView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
             "hist_bins": hist_bins,
         })
         return ctx
+
 class AssignmentUpdateView(LoginRequiredMixin, BreadcrumbMixin, UpdateView):
     model = Assignment
     form_class = AssignmentForm
@@ -313,34 +308,24 @@ class AssignmentUpdateView(LoginRequiredMixin, BreadcrumbMixin, UpdateView):
         old_enabled = getattr(obj, "autograde_enabled", True)
         was_done = bool(getattr(obj, "autograde_done_at", None))
 
-        # normalize due_date using client's tz if your helper exists
         try:
             form.instance.due_date = _normalize_due_with_client_tz(
                 self.request, form.cleaned_data.get("due_date")
             )
         except NameError:
-            # helper not available; keep the form value as-is
             pass
 
         resp = super().form_valid(form)
         self.object.refresh_from_db()
 
-        # If scheduler is wired and the assignment is NOT already finished:
         if HAS_SCHEDULER and not was_done and self.object.autograde_enabled:
             new_due = self.object.due_date
             new_enabled = self.object.autograde_enabled
-
-            # Reschedule when:
-            #  - due date changed, or
-            #  - autograde was off and now turned on, or
-            #  - we explicitly cleared scheduling earlier
             if (new_due != old_due) or (not old_enabled and new_enabled) or (not self.object.autograde_job_scheduled):
-                # Clear the flag and schedule exactly once (ETA or immediate if past-due)
                 self.object.autograde_job_scheduled = False
                 self.object.save(update_fields=["autograde_job_scheduled"])
                 ensure_autograde_scheduled(self.object.pk)
 
-        # If already graded (was_done=True), we do nothing—no re-scheduling.
         return resp
 
     def get_success_url(self):
@@ -362,14 +347,11 @@ class AssignmentUpdateView(LoginRequiredMixin, BreadcrumbMixin, UpdateView):
             ("Assignments", reverse_lazy("assignments:assignment_list", kwargs={"subject_id": s.pk})),
             (a.title, reverse_lazy("assignments:assignment_detail", kwargs={"pk": a.pk})),
             ("Edit", self.request.path),
-        ]   
+        ]
 
 
-# -------- NEW: submissions list & detail (owner professor) --------
+# -------- Submissions list & detail --------
 class AssignmentSubmissionsListView(LoginRequiredMixin, BreadcrumbMixin, ListView):
-    """
-    Owner professor can list all submissions for an assignment.
-    """
     template_name = "assignment_submissions.html"
     context_object_name = "submissions"
 
@@ -407,9 +389,6 @@ class AssignmentSubmissionsListView(LoginRequiredMixin, BreadcrumbMixin, ListVie
 
 
 class AssignmentSubmissionDetailView(LoginRequiredMixin, BreadcrumbMixin, DetailView):
-    """
-    Owner professor OR the submitting student (or superuser) can view a single submission.
-    """
     template_name = "assignment_submission_detail.html"
     context_object_name = "submission"
 
@@ -444,10 +423,8 @@ class AssignmentSubmissionDetailView(LoginRequiredMixin, BreadcrumbMixin, Detail
         ctx["subject"] = a.subject
         ctx["can_manage"] = _is_owner_prof(self.request.user, a.subject)
         ctx["breadcrumbs"] = self.get_breadcrumbs()
-        # file links
         ctx["preview_url"] = reverse("assignments:preview_submission_file", kwargs={"pk": s.pk})
         ctx["download_url"] = reverse("assignments:download_submission_file", kwargs={"pk": s.pk})
-        # filename
         try:
             ctx["file_basename"] = Path(getattr(s.file, "name", "")).name if getattr(s, "file", None) else ""
         except Exception:
@@ -471,7 +448,6 @@ def delete_assignment(request, pk):
 # File streaming helpers
 # -----------------------
 def _open_from_bound_storage(file_field, key: str):
-    """Try the storage bound to the FileField first."""
     try:
         storage = file_field.storage
         logger.info("Assignment file request: storage=%s key=%s", storage.__class__.__name__, key)
@@ -482,7 +458,6 @@ def _open_from_bound_storage(file_field, key: str):
 
 
 def _open_from_default_storage(key: str):
-    """Fallback to default_storage (whatever STORAGES['default'] points to)."""
     try:
         logger.info(
             "Assignment file request (fallback default_storage): storage=%s key=%s",
@@ -495,7 +470,6 @@ def _open_from_default_storage(key: str):
 
 
 def _stream_file_for_assignment(request, assignment: Assignment, inline: bool):
-    """Unified streaming for assignment.file with robust storage fallback."""
     subj = assignment.subject
     if not (_is_owner_prof(request.user, subj) or _is_enrolled(request.user, subj) or request.user.is_superuser):
         raise Http404("Not found.")
@@ -518,9 +492,6 @@ def _stream_file_for_assignment(request, assignment: Assignment, inline: bool):
     return resp
 
 
-# -----------------------
-# Assignment file preview/download
-# -----------------------
 @xframe_options_exempt
 @login_required
 def preview_assignment_file(request, pk: int):
@@ -539,22 +510,12 @@ def download_assignment_file(request, pk: int):
 # -----------------------
 @login_required
 def submit_assignment(request, pk: int):
-    """
-    Create or replace the current user's submission for this assignment.
-    Allowed for enrolled students AND non-owner enrolled professors.
-    The owning professor cannot submit (unless superuser).
-
-    NOTE: We DO NOT grade now. We schedule one job (via Celery Beat) when the deadline passes;
-    until then, students can freely replace their file.
-    """
     a = get_object_or_404(Assignment, pk=pk)
 
-    # Feature toggle
     if not HAS_SUBMISSIONS or AssignmentSubmission is None:
         messages.error(request, "Submissions are not enabled.")
         return redirect("assignments:assignment_detail", pk=a.pk)
 
-    # Permissions
     is_owner = _is_owner_prof(request.user, a.subject)
     is_enrolled = _is_enrolled(request.user, a.subject)
     if is_owner and not request.user.is_superuser:
@@ -566,7 +527,6 @@ def submit_assignment(request, pk: int):
     if request.method != "POST":
         return redirect("assignments:assignment_detail", pk=a.pk)
 
-    # Deadline
     if a.due_date <= timezone.now():
         messages.error(request, "Deadline has passed — submissions are closed.")
         return redirect("assignments:assignment_detail", pk=a.pk)
@@ -576,7 +536,9 @@ def submit_assignment(request, pk: int):
         messages.error(request, "Please choose a file to upload.")
         return redirect("assignments:assignment_detail", pk=a.pk)
 
-    # Create or replace user's submission
+    # sanitize basename only; upload_to builds the full path
+    upfile.name = get_valid_filename(PurePosixPath(upfile.name).name.lstrip("/\\"))
+
     sub = AssignmentSubmission.objects.filter(assignment=a, student=request.user).first()
     if sub:
         try:
@@ -595,7 +557,7 @@ def submit_assignment(request, pk: int):
         sub.save()
         messages.success(request, "Submission updated. Auto-grading will run after the deadline.")
     else:
-        sub = AssignmentSubmission.objects.create(
+        AssignmentSubmission.objects.create(
             assignment=a,
             student=request.user,
             file=upfile,
@@ -604,14 +566,10 @@ def submit_assignment(request, pk: int):
         )
         messages.success(request, "Submission uploaded. Auto-grading will run after the deadline.")
 
-    # Beat will enqueue at deadline; nothing else to do here
     return redirect("assignments:assignment_detail", pk=a.pk)
 
 
 def _stream_submission_file(request, submission, inline: bool):
-    """
-    Stream a submission's file. Allowed to owner professor, the submitter, or superuser.
-    """
     a = submission.assignment
 
     allowed = (
@@ -640,13 +598,13 @@ def _stream_submission_file(request, submission, inline: bool):
     resp["Content-Disposition"] = f'{disp}; filename="{filename}"'
     return resp
 
+
 @login_required
 def delete_assignment(request, pk: int):
     if request.method != "POST":
         return redirect("assignments:assignment_detail", pk=pk)
 
     a = get_object_or_404(Assignment, pk=pk)
-    # owner professor or superuser only
     is_owner = (getattr(request.user, "role", None) == "professor" and a.subject.professor_id == request.user.id)
     if not (is_owner or request.user.is_superuser):
         return redirect("assignments:assignment_detail", pk=pk)
@@ -655,42 +613,35 @@ def delete_assignment(request, pk: int):
     a.delete()
     return redirect("assignments:assignment_list", subject_id=subject_id)
 
+
 @login_required
 def update_submission_grade(request, pk: int):
     sub = get_object_or_404(AssignmentSubmission.objects.select_related("assignment", "assignment__professor"), pk=pk)
 
-    # Only the owning professor may edit
     if request.user != sub.assignment.professor and not request.user.is_superuser:
         messages.error(request, "You don't have permission to edit this grade.")
         return redirect("assignments:assignment_submission_detail", pk=sub.pk)
-
 
     if request.method == "POST":
         grade_raw = (request.POST.get("grade_pct") or "").strip()
         feedback  = (request.POST.get("ai_feedback") or "").strip()
 
-        # allow clearing the grade by leaving blank
         try:
             sub.grade_pct = float(grade_raw) if grade_raw != "" else None
         except ValueError:
             messages.error(request, "Grade must be a number between 0 and 100.")
             return redirect("assignments:assignment_submission_detail", pk=sub.pk)
 
-
         if sub.grade_pct is not None and not (0 <= sub.grade_pct <= 100):
             messages.error(request, "Grade must be between 0 and 100.")
             return redirect("assignments:assignment_submission_detail", pk=sub.pk)
-
 
         sub.ai_feedback = feedback
         sub.save(update_fields=["grade_pct", "ai_feedback"])
         messages.success(request, "Grade & comment updated.")
         return redirect("assignments:assignment_submission_detail", pk=sub.pk)
 
-
-    # If someone GETs this URL, just go back to detail
     return redirect("assignments:assignment_submission_detail", pk=sub.pk)
-
 
 
 @xframe_options_exempt

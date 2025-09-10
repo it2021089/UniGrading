@@ -1,23 +1,41 @@
 # assignments/models.py
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+
 from django.db import models
-from django.utils.text import slugify
 from django.utils import timezone
-from users.models import CustomUser
-from subjects.models import Subject
+from django.utils.text import slugify, get_valid_filename
+
+
+def _seg(value: str, fallback: str) -> str:
+    """Unicode-safe slug for a single path segment, with fallback if empty."""
+    s = slugify((value or "").strip(), allow_unicode=True).strip("/\\.")
+    return s or fallback
+
+
+def _fname(name: str) -> str:
+    """Keep only basename and make it filesystem-safe."""
+    base = PurePosixPath((name or "")).name.lstrip("/\\.")
+    safe = get_valid_filename(base)
+    return safe or "file"
+
 
 def assignment_upload_path(instance, filename):
-    prof = (instance.professor.get_full_name() or instance.professor.username or "prof").strip()
-    subj = (instance.subject.name or "subject").strip()
-    return f"{slugify(prof)}/{slugify(subj)}/assignment-files/{filename}"
+    prof = _seg(
+        getattr(instance.professor, "get_full_name", lambda: "")() or instance.professor.username,
+        fallback=f"user-{getattr(instance.professor, 'pk', 'x')}"
+    )
+    subj = _seg(instance.subject.name, fallback=f"subject-{getattr(instance.subject, 'pk', 'x')}")
+    fname = _fname(filename)
+    return "/".join([prof, subj, "assignment-files", fname])
+
 
 class Assignment(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField()
-    subject = models.ForeignKey(Subject, related_name="assignments", on_delete=models.CASCADE)
-    professor = models.ForeignKey(CustomUser, limit_choices_to={'role': 'professor'}, on_delete=models.CASCADE)
+    subject = models.ForeignKey("subjects.Subject", related_name="assignments", on_delete=models.CASCADE)
+    professor = models.ForeignKey("users.CustomUser", limit_choices_to={"role": "professor"}, on_delete=models.CASCADE)
     due_date = models.DateTimeField()
-    file = models.FileField(upload_to=assignment_upload_path, blank=True, null=True)
+    file = models.FileField(upload_to=assignment_upload_path, blank=True, null=True, max_length=1024)
 
     # Autograder config
     autograde_enabled = models.BooleanField(default=True)
@@ -45,18 +63,27 @@ class Assignment(models.Model):
             self.file.storage.delete(self.file.name)
         super().delete(*args, **kwargs)
 
+
 def submission_upload_path(instance, filename):
     a = instance.assignment
-    prof = slugify(a.subject.professor.get_full_name() or a.subject.professor.username or "prof")
-    subj = slugify(a.subject.name or "subject")
-    a_slug = slugify(a.title or f"assignment-{a.pk}")
-    student = slugify(instance.student.get_full_name() or instance.student.username or f"user-{instance.student_id}")
-    return f"{prof}/{subj}/assignment-submissions/{a_slug}/{student}/{filename}"
+    prof = _seg(
+        a.subject.professor.get_full_name() or a.subject.professor.username,
+        fallback=f"user-{getattr(a.subject.professor, 'pk', 'x')}"
+    )
+    subj = _seg(a.subject.name, fallback=f"subject-{getattr(a.subject, 'pk', 'x')}")
+    a_slug = _seg(a.title, fallback=f"assignment-{getattr(a, 'pk', 'x')}")
+    student = _seg(
+        instance.student.get_full_name() or instance.student.username,
+        fallback=f"user-{getattr(instance.student, 'pk', 'x')}"
+    )
+    fname = _fname(filename)
+    return "/".join([prof, subj, "assignment-submissions", a_slug, student, fname])
+
 
 class AssignmentSubmission(models.Model):
     assignment = models.ForeignKey(Assignment, related_name="submissions", on_delete=models.CASCADE)
-    student = models.ForeignKey(CustomUser, related_name="assignment_submissions", on_delete=models.CASCADE)
-    file = models.FileField(upload_to=submission_upload_path)
+    student = models.ForeignKey("users.CustomUser", related_name="assignment_submissions", on_delete=models.CASCADE)
+    file = models.FileField(upload_to=submission_upload_path, max_length=1024)
     submitted_at = models.DateTimeField(default=timezone.now)
 
     grade_pct = models.FloatField(null=True, blank=True)
