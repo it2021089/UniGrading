@@ -1,30 +1,54 @@
 # subjects/models.py
-from django.db import models
-from django.utils.text import slugify
+from pathlib import PurePosixPath
+
 from django.conf import settings
+from django.db import models
+from django.utils.text import slugify, get_valid_filename
+
 from users.models import CustomUser
+
+
+def _clean_seg(s: str) -> str:
+    """Slugify path segments; strip slashes and dots."""
+    return slugify((s or "").strip("/\\."))
+
+
+def _clean_filename(name: str) -> str:
+    """Keep only basename, drop leading slashes, and make it filesystem-safe."""
+    base = PurePosixPath((name or "")).name.lstrip("/\\.")
+    safe = get_valid_filename(base)
+    return safe or "file"
 
 
 def subject_file_upload_path(instance, filename):
     """
-    S3/MinIO object key layout:
+    S3/MinIO object key layout (sanitized):
       <prof>/<subject>/<category>/[<student>/]<filename>
-      - For Assignments/Tests uploaded by the professor: "<category> Files" bucket folder.
-      - All directory parts are slugified for safety; filename kept as-is.
+    - All segments are slugified or validated.
+    - No leading slash. No double slashes. No client-supplied subpaths in filename.
+    - For professor uploads to Assignments/Tests, use '<category>-files' folder.
     """
     user = instance.uploaded_by
-    professor_name = slugify(instance.category.subject.professor.get_full_name()
-                             or instance.category.subject.professor.username)
-    subject_name = slugify(instance.category.subject.name)
-    category_name = slugify(instance.category.name)
+    professor_name = _clean_seg(
+        instance.category.subject.professor.get_full_name()
+        or instance.category.subject.professor.username
+    )
+    subject_name = _clean_seg(instance.category.subject.name)
+    category_name = _clean_seg(instance.category.name)
+    fname = _clean_filename(filename)
+
+    parts = [professor_name, subject_name]
 
     if getattr(user, "role", None) == "student":
-        student_name = slugify(user.get_full_name() or user.username)
-        return f"{professor_name}/{subject_name}/{category_name}/{student_name}/{filename}"
+        student_name = _clean_seg(user.get_full_name() or user.username)
+        parts += [category_name, student_name, fname]
     else:
-        if category_name.lower() in ["assignments", "tests"]:
-            return f"{professor_name}/{subject_name}/{category_name} Files/{filename}"
-        return f"{professor_name}/{subject_name}/{category_name}/{filename}"
+        if category_name in {"assignments", "tests"}:
+            parts += [f"{category_name}-files", fname]
+        else:
+            parts += [category_name, fname]
+
+    return "/".join(p for p in parts if p)
 
 
 class Subject(models.Model):
@@ -61,13 +85,18 @@ class Category(models.Model):
 class File(models.Model):
     category = models.ForeignKey("Category", related_name="files", on_delete=models.CASCADE)
     name = models.CharField(max_length=100)
-    # IMPORTANT: no explicit storage=... — uses STORAGES["default"] (S3Boto3/MinIO)
+    # Uses default storage (e.g., S3Boto3/MinIO) and sanitized upload_to
     file = models.FileField(upload_to=subject_file_upload_path)
     uploaded_by = models.ForeignKey(CustomUser, null=True, blank=True, on_delete=models.SET_NULL)
     uploaded_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if self.file and self.file.name:
+            self.file.name = _clean_filename(self.file.name)
+        super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):
         storage = self.file.storage
